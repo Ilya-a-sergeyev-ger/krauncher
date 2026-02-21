@@ -26,10 +26,11 @@ from .exceptions import (
     TaskTimeout,
 )
 from .KrauncherClient import KrauncherClient
-from .models import TaskHandle, TaskResult
+from .models import Runner, TaskHandle, TaskResult
 
 __all__ = [
     "KrauncherClient",
+    "Runner",
     "TaskHandle",
     "TaskResult",
     "KrauncherError",

@@ -1,4 +1,4 @@
-"""TaskHandle and TaskResult models."""
+"""TaskHandle, TaskResult and Runner models."""
 
 from __future__ import annotations
 
@@ -16,6 +16,45 @@ if TYPE_CHECKING:
     from .KrauncherClient import KrauncherClient
 
 TERMINAL_STATUSES = frozenset({"completed", "failed", "timeout", "hardware_preempted"})
+
+_STATUS_SYMBOL = {
+    "available": "✓",
+    "busy": "●",
+    "provisioning": "◌",
+    "draining": "↓",
+    "offline": "✗",
+}
+
+
+@dataclass(frozen=True)
+class Runner:
+    """A compute host available in the fleet.
+
+    Returned by :meth:`KrauncherClient.list_runners`.
+    Pass ``runner.provider`` to ``@client.task(provider=...)`` to pin a task
+    to this specific provider.
+    """
+
+    provider: str
+    host_id: str
+    gpu_model: str
+    gpu_count: int
+    vram_gb: int
+    gpu_arch: str
+    price_per_hour_usd: float
+    status: str
+    spot: bool
+    region: str
+    worker_id: str | None = None
+
+    def __str__(self) -> str:
+        spot_tag = " (spot)" if self.spot else ""
+        price = f"${self.price_per_hour_usd:.2f}/hr" if self.price_per_hour_usd else "free"
+        symbol = _STATUS_SYMBOL.get(self.status, "?")
+        return (
+            f"{symbol} [{self.provider}] {self.gpu_model} "
+            f"{self.vram_gb}GB {self.gpu_arch} — {price}{spot_tag} — {self.status}"
+        )
 
 logger = logging.getLogger(__name__)
 

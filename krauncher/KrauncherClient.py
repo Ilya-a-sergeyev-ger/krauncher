@@ -8,7 +8,7 @@ from typing import Any, Callable
 import httpx
 
 from .exceptions import KrauncherError
-from .models import TaskHandle, _check_response
+from .models import Runner, TaskHandle, _check_response
 from .serializer import serialize_function
 
 
@@ -42,6 +42,7 @@ class KrauncherClient:
         priority: int = 1,
         data_urls: list[str] | None = None,
         group_id: str | None = None,
+        provider: str | None = None,
     ) -> Callable:
         """Decorator that marks a function as a remote GPU task.
 
@@ -57,6 +58,9 @@ class KrauncherClient:
             data_urls: URLs for data bridge downloads into ``/data``.
             group_id: Task group ID for host affinity — tasks with the
                 same group_id are routed to the same worker.
+            provider: Pin task to a specific provider (e.g. ``"runpod"`` or
+                ``"local"``).  ``None`` lets the dispatcher pick the cheapest
+                suitable host across all providers.
         """
 
         client = self
@@ -67,12 +71,16 @@ class KrauncherClient:
 
             @functools.wraps(func)
             async def wrapper(**kwargs: Any) -> TaskHandle:
-                body = {
+                requirements: dict[str, Any] = {
+                    "min_vram_gb": vram_gb,
+                    "gpu_arch": gpu_arch,
+                }
+                if provider is not None:
+                    requirements["provider_name"] = provider
+
+                body: dict[str, Any] = {
                     "priority": priority,
-                    "requirements": {
-                        "min_vram_gb": vram_gb,
-                        "gpu_arch": gpu_arch,
-                    },
+                    "requirements": requirements,
                     "payload": {
                         "code_string": code_string,
                         "entry_point": entry_point,
@@ -105,7 +113,120 @@ class KrauncherClient:
             wrapper._krauncher_code = code_string
             wrapper._krauncher_entry_point = entry_point
             wrapper._krauncher_pip = pip or []
+            wrapper._krauncher_provider = provider
 
             return wrapper
 
         return decorator
+
+    async def list_runners(self, *, print_table: bool = True) -> list[Runner]:
+        """Fetch available compute runners from the broker fleet.
+
+        Calls ``GET /admin/fleet`` and returns a list of :class:`Runner`
+        objects grouped by provider (local first, then external providers
+        sorted alphabetically).
+
+        Args:
+            print_table: When ``True`` (default), also prints a formatted
+                table to stdout — useful in notebooks and interactive shells.
+
+        Returns:
+            List of :class:`Runner` objects representing current fleet state.
+
+        Example::
+
+            runners = await client.list_runners()
+            # Pick the provider you want:
+            runpod_runners = [r for r in runners if r.provider == "runpod"]
+
+            @client.task(vram_gb=24, provider="runpod")
+            def train(data): ...
+        """
+        async with httpx.AsyncClient(timeout=10.0) as session:
+            resp = await session.get(
+                f"{self.broker_url}/admin/fleet",
+                headers={"X-API-Key": self.api_key},
+            )
+            _check_response(resp)
+            data = resp.json()
+
+        # Build worker_id lookup: host_id → worker_id
+        workers_by_host: dict[str, str] = {
+            w["host_id"]: w["worker_id"]
+            for w in data.get("workers", [])
+            if w.get("host_id") and w.get("worker_id")
+        }
+
+        runners: list[Runner] = []
+        for h in data.get("hosts", []):
+            runners.append(Runner(
+                provider=h.get("provider_name", "unknown"),
+                host_id=h.get("host_id", ""),
+                gpu_model=h.get("gpu_model", "unknown"),
+                gpu_count=h.get("gpu_count", 1),
+                vram_gb=h.get("vram_gb", 0),
+                gpu_arch=h.get("gpu_arch", "unknown"),
+                price_per_hour_usd=h.get("price_per_hour_usd", 0.0),
+                status=h.get("status", "unknown"),
+                spot=h.get("spot", False),
+                region=h.get("region", ""),
+                worker_id=workers_by_host.get(h.get("host_id", "")),
+            ))
+
+        # Sort: local first, then alphabetically by provider, then by status
+        _provider_order = {"local": 0, "mock": 1}
+        runners.sort(key=lambda r: (
+            _provider_order.get(r.provider, 99),
+            r.provider,
+            r.status,
+            r.host_id,
+        ))
+
+        if print_table:
+            _print_runners_table(runners)
+
+        return runners
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+def _print_runners_table(runners: list[Runner]) -> None:
+    """Print a formatted runners table grouped by provider."""
+    from .models import _STATUS_SYMBOL  # noqa: PLC0415
+
+    if not runners:
+        print("No runners available.")
+        return
+
+    cols = ("", "PROVIDER", "GPU", "VRAM", "ARCH", "PRICE/HR", "STATUS", "HOST ID")
+    widths = [2, 8, 20, 5, 8, 9, 13, 24]
+
+    sep = "  ".join("-" * w for w in widths)
+    header = "  ".join(c.ljust(w) for c, w in zip(cols, widths))
+
+    print(header)
+    print(sep)
+
+    current_provider = None
+    for r in runners:
+        if r.provider != current_provider:
+            if current_provider is not None:
+                print()
+            current_provider = r.provider
+
+        symbol = _STATUS_SYMBOL.get(r.status, "?")
+        price = f"${r.price_per_hour_usd:.2f}" if r.price_per_hour_usd else "free"
+        spot_marker = "*" if r.spot else ""
+        row = (
+            symbol,
+            r.provider,
+            r.gpu_model[:20],
+            f"{r.vram_gb}GB",
+            r.gpu_arch[:8],
+            f"{price}{spot_marker}",
+            r.status,
+            r.host_id[:24],
+        )
+        print("  ".join(str(v).ljust(w) for v, w in zip(row, widths)))
