@@ -17,6 +17,17 @@ Usage::
         print(result.output)
 """
 
+import logging as _logging
+import os as _os
+
+if _os.getenv("KRAUNCHER_DEBUG", "").lower() in ("1", "true", "yes"):
+    _handler = _logging.StreamHandler()
+    _handler.setFormatter(_logging.Formatter("%(message)s"))
+    _log = _logging.getLogger("krauncher")
+    _log.setLevel(_logging.DEBUG)
+    if not _log.handlers:
+        _log.addHandler(_handler)
+
 from .exceptions import (
     AuthError,
     KrauncherError,

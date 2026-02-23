@@ -136,41 +136,156 @@ async def _relay_stream(
     relay_url: str,
     token: str,
     on_log: Callable[[dict[str, Any]], None],
+    *,
+    ek_priv: Any = None,
+    plaintext_code: str | None = None,
+    plaintext_args: dict[str, Any] | None = None,
 ) -> None:
-    """Connect to relay WebSocket and feed messages to *on_log* until stream ends.
+    """Connect to relay via gRPC and feed messages to *on_log* until stream ends.
+
+    Uses TaskStream (server-side streaming RPC) to receive messages and
+    UploadPayload (unary RPC) to deliver the E2E encrypted payload.
+
+    relay_url format: "host:port"  (scheme prefix is stripped if present).
 
     Silently exits on any connection error — the main wait() loop continues
     polling normally, providing automatic fallback when relay is unavailable.
     """
     try:
-        import websockets
-        import websockets.exceptions
+        import grpc
+        import grpc.aio
     except ImportError:
-        logger.debug("relay_streaming_unavailable: websockets not installed")
+        logger.debug("[relay] grpcio not installed — run: pip install grpcio")
         return
 
-    ws_url = f"{relay_url.rstrip('/')}/tasks/{task_id}/stream?token={token}"
     try:
-        async with websockets.connect(ws_url) as ws:
-            async for raw in ws:
+        from . import relay_pb2, relay_pb2_grpc
+    except ImportError as exc:
+        logger.debug("[relay] proto stubs not found: %s", exc)
+        return
+
+    # Strip scheme prefix if present (e.g. legacy ws:// or grpc://)
+    target = relay_url
+    for prefix in ("grpc://", "wss://", "ws://", "https://", "http://"):
+        if target.startswith(prefix):
+            target = target[len(prefix):]
+            break
+    target = target.rstrip("/")
+
+    e2e_mode = ek_priv is not None
+    logger.debug("[relay] connecting task_id=%s target=%s e2e=%s", task_id[:8], target, e2e_mode)
+
+    metadata = [("authorization", f"bearer {token}")]
+    shared_key: bytes | None = None
+
+    try:
+        async with grpc.aio.insecure_channel(target) as channel:
+            stub = relay_pb2_grpc.RelayStub(channel)
+
+            logger.debug("[relay] TaskStream open task_id=%s", task_id[:8])
+
+            async for proto_msg in stub.TaskStream(
+                relay_pb2.TaskStreamRequest(task_id=task_id),
+                metadata=metadata,
+            ):
+                # Convert proto to dict (data field is raw JSON bytes)
                 try:
-                    msg = json.loads(raw)
+                    data_parsed = json.loads(proto_msg.data) if proto_msg.data else {}
                 except (json.JSONDecodeError, TypeError):
+                    data_parsed = {}
+
+                msg: dict[str, Any] = {
+                    "task_id": proto_msg.task_id,
+                    "type": proto_msg.type,
+                    "ts": proto_msg.ts,
+                    "seq": proto_msg.seq,
+                    "data": data_parsed,
+                }
+
+                logger.debug(
+                    "[relay] msg seq=%d type=%s data_keys=%s",
+                    proto_msg.seq,
+                    proto_msg.type,
+                    list(data_parsed.keys()) if isinstance(data_parsed, dict) else type(data_parsed).__name__,
+                )
+
+                # --- E2E: key_exchange handling ---
+                if (
+                    ek_priv is not None
+                    and shared_key is None
+                    and msg["type"] == "event"
+                    and isinstance(msg["data"], dict)
+                    and msg["data"].get("name") == "key_exchange"
+                ):
+                    logger.debug(
+                        "[relay] key_exchange received task_id=%s pub_present=%s",
+                        task_id[:8], "pub" in msg["data"],
+                    )
+                    try:
+                        import base64
+                        from .crypto import derive_shared_secret, encrypt
+                        wk_pub_b64 = msg["data"]["pub"]
+                        wk_pub_bytes = base64.urlsafe_b64decode(wk_pub_b64 + "==")
+                        shared_key = derive_shared_secret(ek_priv, wk_pub_bytes)
+                        logger.debug("[relay] shared key derived task_id=%s", task_id[:8])
+
+                        payload_plain = json.dumps({
+                            "code_string": plaintext_code or "",
+                            "args": plaintext_args or {},
+                        }).encode()
+                        enc_payload = encrypt(shared_key, payload_plain)
+                        logger.debug(
+                            "[relay] uploading payload task_id=%s plain_len=%d enc_len=%d",
+                            task_id[:8], len(payload_plain), len(enc_payload),
+                        )
+
+                        # Upload via gRPC UploadPayload (replaces HTTP PUT)
+                        await stub.UploadPayload(
+                            relay_pb2.UploadPayloadRequest(
+                                task_id=task_id,
+                                data=json.dumps({"enc": enc_payload}).encode(),
+                            ),
+                            metadata=metadata,
+                        )
+                        logger.debug("[relay] payload uploaded ok task_id=%s", task_id[:8])
+                    except Exception as exc:
+                        logger.debug(
+                            "[relay] key_exchange error task_id=%s: %s: %s",
+                            task_id[:8], type(exc).__name__, exc,
+                        )
+                    # Don't pass key_exchange to on_log — internal protocol event
                     continue
+
+                # --- E2E: decrypt data field for subsequent messages ---
+                if shared_key is not None:
+                    data_field = msg.get("data")
+                    if isinstance(data_field, dict) and "enc" in data_field:
+                        try:
+                            from .crypto import decrypt
+                            plaintext = decrypt(shared_key, data_field["enc"])
+                            msg = dict(msg)
+                            msg["data"] = json.loads(plaintext)
+                        except Exception as exc:
+                            logger.debug("[relay] decrypt error: %s", exc)
+                            continue
+
+                # --- Deliver to caller ---
                 try:
                     on_log(msg)
                 except Exception:
                     pass
-                # Relay closes after stream_ended grace period;
-                # we also exit early on the event to be responsive.
+
+                # stream_ended is always sent plaintext; exit relay loop promptly
                 if (
                     msg.get("type") == "event"
                     and isinstance(msg.get("data"), dict)
                     and msg["data"].get("name") == "stream_ended"
                 ):
+                    logger.debug("[relay] stream_ended task_id=%s", task_id[:8])
                     break
+
     except Exception as exc:
-        logger.debug("relay_stream_error: %s", exc)
+        logger.debug("[relay] error task_id=%s: %s: %s", task_id[:8], type(exc).__name__, exc)
 
 
 class TaskHandle:
@@ -182,10 +297,21 @@ class TaskHandle:
         result = await task            # async wait for completion
     """
 
-    def __init__(self, task_id: str, client: KrauncherClient) -> None:
+    def __init__(
+        self,
+        task_id: str,
+        client: KrauncherClient,
+        ek_priv: Any = None,
+        plaintext_code: str | None = None,
+        plaintext_args: dict[str, Any] | None = None,
+    ) -> None:
         self.task_id = task_id
         self._client = client
         self._result: TaskResult | None = None
+        # E2E fields — set when client.encrypt=True
+        self._ek_priv = ek_priv
+        self._plaintext_code = plaintext_code
+        self._plaintext_args = plaintext_args
 
     def __repr__(self) -> str:
         return f"TaskHandle(task_id={self.task_id!r})"
@@ -206,6 +332,12 @@ class TaskHandle:
         active task *and* ``on_log`` is provided, a concurrent WebSocket
         subscription to the relay is opened.  Each relay message (stdout,
         stderr, event, metric) is passed to ``on_log`` in real time.
+
+        In E2E mode (client.encrypt=True), the relay stream is used to perform
+        the key exchange and deliver the encrypted task payload to the worker.
+        Relay messages are transparently decrypted before being passed to on_log.
+        When E2E is active, wait() automatically opens the relay stream even if
+        on_log is not provided (needed to deliver the payload).
 
         ``on_log`` signature::
 
@@ -233,27 +365,37 @@ class TaskHandle:
         delay = 0.5
         relay_task: asyncio.Task | None = None
 
+        # In E2E mode we must open relay even without on_log (to deliver payload)
+        needs_relay = on_log is not None or self._ek_priv is not None
+        _on_log_effective = on_log or (lambda _msg: None)
+
         async with httpx.AsyncClient(timeout=30.0) as session:
             while True:
                 data = await self._poll(session)
 
-                # Start relay streaming on first poll that returns relay info
+                # Start relay streaming on first poll that returns relay info.
+                # Also retry if the relay task exited (connection error, auth fail, etc.)
+                relay_dead = relay_task is not None and relay_task.done()
                 if (
-                    relay_task is None
-                    and on_log is not None
-                    and data.get("relay_url")
-                    and data.get("relay_task_token")
+                    (relay_task is None or relay_dead)
+                    and needs_relay
                     and data["status"] not in TERMINAL_STATUSES
                 ):
-                    relay_task = asyncio.create_task(
-                        _relay_stream(
-                            task_id=self.task_id,
-                            relay_url=data["relay_url"],
-                            token=data["relay_task_token"],
-                            on_log=on_log,
-                        ),
-                        name=f"relay-{self.task_id[:8]}",
-                    )
+                    relay_url_val = data.get("relay_url")
+                    relay_token_val = data.get("relay_task_token")
+                    if relay_url_val and relay_token_val:
+                        relay_task = asyncio.create_task(
+                            _relay_stream(
+                                task_id=self.task_id,
+                                relay_url=relay_url_val,
+                                token=relay_token_val,
+                                on_log=_on_log_effective,
+                                ek_priv=self._ek_priv,
+                                plaintext_code=self._plaintext_code,
+                                plaintext_args=self._plaintext_args,
+                            ),
+                            name=f"relay-{self.task_id[:8]}",
+                        )
 
                 if data["status"] in TERMINAL_STATUSES:
                     if relay_task is not None:
