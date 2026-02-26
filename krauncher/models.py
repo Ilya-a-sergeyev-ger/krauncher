@@ -89,7 +89,6 @@ class TaskResult:
         billing = result.get("billing_metrics") or {}
 
         duration = billing.get("duration_sec", 0.0)
-        price = billing.get("price_per_hour_usd", 0.0)
 
         return cls(
             task_id=str(data["task_id"]),
@@ -104,7 +103,7 @@ class TaskResult:
             execution_time_sec=sys_info.get("execution_time_sec", 0.0),
             duration_sec=duration,
             gpu_util_avg=billing.get("gpu_util_avg", 0.0),
-            cost_usd=duration * price / 3600.0 if duration and price else 0.0,
+            cost_usd=data.get("cost_usd") or 0.0,
             queue_wait_sec=data.get("queue_wait_sec") or 0.0,
             download_sec=data.get("download_sec") or 0.0,
             pip_install_sec=data.get("pip_install_sec") or 0.0,
