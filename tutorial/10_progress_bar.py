@@ -112,7 +112,19 @@ async def main():
     print(f"Final loss:    {result.output['final_loss']}")
     print(f"Improvement:   {result.output['improvement_pct']}%")
     print(f"Worker:        {result.worker_id}  GPU: {result.actual_gpu}")
-    print(f"Time: {result.execution_time_sec:.2f}s  Cost: ${result.cost_usd:.6f}")
+    print(f"Time:          {result.execution_time_sec:.2f}s")
+    print()
+    print("── Billing ──────────────────────────────────")
+    print(f"  Provider cost:  ${result.cost_usd:.6f} USD")
+    cur = result.billing_currency
+    if result.client_cost:
+        print(f"  Net charge:     {result.client_cost:.6f} {cur}")
+        if result.vat_rate_pct:
+            print(f"  VAT ({result.vat_rate_pct:.1f}%):     {result.vat_amount:.6f} {cur}")
+        print(f"  Total:          {result.total_cost:.6f} {cur}")
+    else:
+        print(f"  (billing info not yet available)")
+    print("─────────────────────────────────────────────")
 
 
 if __name__ == "__main__":

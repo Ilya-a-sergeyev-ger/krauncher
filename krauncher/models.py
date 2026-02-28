@@ -75,7 +75,12 @@ class TaskResult:
     execution_time_sec: float = 0.0
     duration_sec: float = 0.0
     gpu_util_avg: float = 0.0
-    cost_usd: float = 0.0
+    cost_usd: float = 0.0           # provider cost in USD (what we paid the GPU provider)
+    client_cost: float = 0.0        # net charge in billing_currency (after markup, before VAT)
+    vat_amount: float = 0.0         # VAT in billing_currency
+    total_cost: float = 0.0         # client_cost + vat_amount in billing_currency
+    billing_currency: str = "USD"
+    vat_rate_pct: float = 0.0
     queue_wait_sec: float = 0.0
     download_sec: float = 0.0
     pip_install_sec: float = 0.0
@@ -89,7 +94,6 @@ class TaskResult:
         billing = result.get("billing_metrics") or {}
 
         duration = billing.get("duration_sec", 0.0)
-        price = billing.get("price_per_hour_usd", 0.0)
 
         return cls(
             task_id=str(data["task_id"]),
@@ -104,7 +108,12 @@ class TaskResult:
             execution_time_sec=sys_info.get("execution_time_sec", 0.0),
             duration_sec=duration,
             gpu_util_avg=billing.get("gpu_util_avg", 0.0),
-            cost_usd=duration * price / 3600.0 if duration and price else 0.0,
+            cost_usd=data.get("cost_usd") or 0.0,
+            client_cost=data.get("client_cost_local") or 0.0,
+            vat_amount=data.get("vat_amount_local") or 0.0,
+            total_cost=data.get("total_cost_local") or 0.0,
+            billing_currency=data.get("billing_currency") or "USD",
+            vat_rate_pct=data.get("vat_rate_pct") or 0.0,
             queue_wait_sec=data.get("queue_wait_sec") or 0.0,
             download_sec=data.get("download_sec") or 0.0,
             pip_install_sec=data.get("pip_install_sec") or 0.0,

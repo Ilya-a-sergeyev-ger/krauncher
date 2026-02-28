@@ -42,6 +42,7 @@ def _run_group(gi: int, group_id: str, n_tasks: int) -> list[tuple[int, int, str
     """Submit and wait for all tasks in one group (runs in its own thread).
 
     Returns list of (group_index, task_index, task_id, result_or_error).
+    Each successful result is a TaskResult object.
     """
     loop = asyncio.new_event_loop()
     client = KrauncherClient(api_key=API_KEY, broker_url=BROKER_URL)
@@ -157,6 +158,34 @@ def main():
         print(f"\n{len(errors)} task(s) failed:")
         for gi, ti, tid, err in errors:
             print(f"  G{gi}/T{ti:02d} [{tid}]: {err}")
+
+    # ------------------------------------------------------------------
+    # 4. Billing summary
+    # ------------------------------------------------------------------
+    successful = [
+        outcome for _, _, _, outcome in all_results
+        if not isinstance(outcome, BaseException)
+    ]
+    if successful:
+        cur            = successful[0].billing_currency or "USD"
+        vat_rate       = successful[0].vat_rate_pct
+        total_provider = sum(r.cost_usd for r in successful)
+        total_client   = round(sum(r.client_cost for r in successful), 6)
+        total_charge   = round(sum(r.total_cost  for r in successful), 6)
+        # Derive total VAT from actual charged amounts — individual per-task
+        # vat_amount fields may round to 0 for micro-transactions.
+        total_vat      = round(total_charge - total_client, 6)
+
+        print("\n── Billing ──────────────────────────────────")
+        print(f"  Tasks completed:  {len(successful)}")
+        print(f"  Provider cost:    ${total_provider:.6f} USD")
+        print(f"  Net charge:       {total_client:.6f} {cur}")
+        if vat_rate and total_vat > 0:
+            print(f"  VAT ({vat_rate:.1f}%):       {total_vat:.6f} {cur}")
+        elif vat_rate:
+            print(f"  VAT ({vat_rate:.1f}%):       0 (below per-task rounding threshold)")
+        print(f"  Total charged:    {total_charge:.6f} {cur}")
+        print("─────────────────────────────────────────────")
 
 
 if __name__ == "__main__":
