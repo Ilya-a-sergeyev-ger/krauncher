@@ -87,14 +87,23 @@ class TestSerializeInvalid:
         with pytest.raises(SerializationError, match="plain function"):
             serialize_function(Foo().bar)
 
-    def test_reject_closure(self):
+    def test_reject_closure_with_kwargs_hint(self):
         x = 10
 
         def closure_fn():
             return x
 
-        with pytest.raises(SerializationError, match="closures"):
+        with pytest.raises(SerializationError, match="pass via kwargs"):
             serialize_function(closure_fn)
+
+    def test_closure_error_lists_captured_vars(self):
+        a, b = 1, 2
+
+        def captures_two():
+            return a + b
+
+        with pytest.raises(SerializationError, match="a, b"):
+            serialize_function(captures_two)
 
     def test_reject_nested_function(self):
         def outer():
@@ -108,3 +117,57 @@ class TestSerializeInvalid:
     def test_reject_not_callable(self):
         with pytest.raises(SerializationError, match="callable"):
             serialize_function(42)
+
+
+# -- Multi-function serialization ---------------------------------------------
+
+
+class TestMultiFunctionSerialization:
+    def test_helpers_included(self):
+        """Helper functions called by entry point are included."""
+        from tests._helpers_fixture import train
+
+        code, entry = serialize_function(train)
+        assert entry == "train"
+        assert "def preprocess" in code
+        assert "def normalize" in code
+        assert "def augment" in code
+
+    def test_helpers_before_entry_point(self):
+        """Helpers appear before the entry point in code_string."""
+        from tests._helpers_fixture import train
+
+        code, _ = serialize_function(train)
+        # Entry point should be last
+        last_def = code.rfind("\ndef train(")
+        assert last_def > 0, "entry point should not be first"
+        # All helpers should be above it
+        assert code.find("def normalize") < last_def
+        assert code.find("def augment") < last_def
+        assert code.find("def preprocess") < last_def
+
+    def test_no_helpers_for_standalone(self):
+        """Function with no helper calls produces single-function code."""
+        from tests._helpers_fixture import standalone
+
+        code, entry = serialize_function(standalone)
+        assert entry == "standalone"
+        assert code.count("def ") == 1
+
+    def test_combined_code_compiles(self):
+        """Combined code_string with helpers is valid Python."""
+        from tests._helpers_fixture import train
+
+        code, _ = serialize_function(train)
+        compile(code, "<test>", "exec")
+
+    def test_combined_code_executes(self):
+        """Combined code_string actually runs correctly."""
+        from tests._helpers_fixture import train
+
+        code, entry = serialize_function(train)
+        ns: dict = {}
+        exec(code, ns)
+        result = ns[entry](data=[1, 2, 3, 4, 5], epochs=3)
+        assert result["epochs"] == 3
+        assert isinstance(result["result"], (int, float))

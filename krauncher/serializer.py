@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import inspect
 import textwrap
 from typing import Callable
@@ -26,13 +27,80 @@ def _strip_decorators(source: str) -> str:
     return "".join(lines[idx:])
 
 
+def _called_names(source: str) -> set[str]:
+    """Extract names that appear as function calls in *source*."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return set()
+
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            names.add(node.func.id)
+    return names
+
+
+def _serialize_one(fn: Callable) -> str:
+    """Get dedented, decorator-stripped source for a single function."""
+    source = inspect.getsource(fn)
+    source = _strip_decorators(source)
+    return textwrap.dedent(source)
+
+
+def _collect_helpers(fn: Callable, entry_source: str) -> str:
+    """Collect helper functions from the same module that *fn* calls.
+
+    Walks the call graph (breadth-first), serializes each helper, and
+    returns them concatenated in dependency order (deepest helpers first).
+    """
+    module = inspect.getmodule(fn)
+    if module is None:
+        return ""
+
+    collected: dict[str, str] = {}  # name → source
+    visited: set[str] = {fn.__name__}
+    queue = list(_called_names(entry_source))
+
+    while queue:
+        candidate = queue.pop(0)
+        if candidate in visited:
+            continue
+        visited.add(candidate)
+
+        obj = getattr(module, candidate, None)
+        if obj is None or not inspect.isfunction(obj):
+            continue
+        if getattr(obj, "__module__", None) != fn.__module__:
+            continue
+
+        try:
+            helper_source = _serialize_one(obj)
+        except (OSError, TypeError):
+            continue
+
+        collected[candidate] = helper_source
+        # Recurse: check what *this* helper calls
+        queue.extend(_called_names(helper_source) - visited)
+
+    if not collected:
+        return ""
+
+    # Order: helpers in collection order (BFS from entry point).
+    # Reverse so deepest dependencies come first.
+    parts = list(collected.values())
+    parts.reverse()
+    return "\n\n".join(parts)
+
+
 def serialize_function(fn: Callable) -> tuple[str, str]:
     """Serialize a function to (code_string, entry_point).
 
     The worker injects code_string at module scope and calls
-    ``globals()[entry_point](**args)``. Therefore the function must be
-    a plain, top-level, self-contained definition with all imports
-    inside the body.
+    ``globals()[entry_point](**args)``.  The entry point must be a
+    plain, top-level function.  Helper functions defined in the same
+    module that are called by the entry point are automatically
+    included in the serialized code.
 
     Returns:
         Tuple of (code_string, entry_point_name).
@@ -54,10 +122,12 @@ def serialize_function(fn: Callable) -> tuple[str, str]:
         raise SerializationError("Lambda functions cannot be serialized. Use a named function.")
 
     if fn.__code__.co_freevars:
+        vars_str = ", ".join(fn.__code__.co_freevars)
+        kwargs_hint = ", ".join(f"{v}={v}" for v in fn.__code__.co_freevars)
         raise SerializationError(
-            f"Function '{name}' captures variables from enclosing scope: "
-            f"{fn.__code__.co_freevars}. "
-            "CaS tasks must be self-contained with no closures."
+            f"Function '{name}' captures variables from enclosing scope: {vars_str}. "
+            f"Move them into function arguments and pass via kwargs:\n"
+            f"  handle = await {name}({kwargs_hint})"
         )
 
     if "<locals>" in fn.__qualname__:
@@ -78,8 +148,12 @@ def serialize_function(fn: Callable) -> tuple[str, str]:
     # Strip decorator lines — inspect.getsource() includes them,
     # but the worker only needs the bare function definition.
     source = _strip_decorators(source)
-
     code_string = textwrap.dedent(source)
+
+    # Collect helper functions from the same module
+    helpers = _collect_helpers(fn, code_string)
+    if helpers:
+        code_string = helpers + "\n\n" + code_string
 
     try:
         compile(code_string, f"<krauncher:{name}>", "exec")
