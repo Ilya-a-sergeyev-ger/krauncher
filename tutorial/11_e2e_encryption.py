@@ -28,7 +28,7 @@ from krauncher import KrauncherClient
 API_KEY = os.environ.get("CAS_API_KEY", "")
 BROKER_URL = os.environ.get("CAS_BROKER_URL", "http://localhost:8000")
 
-_client = KrauncherClient(api_key=API_KEY, broker_url=BROKER_URL, encrypt=True)
+_client = KrauncherClient(api_key=API_KEY, broker_url=BROKER_URL)
 
 
 @_client.task(vram_gb=4, timeout=120)

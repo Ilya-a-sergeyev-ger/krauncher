@@ -15,6 +15,11 @@ from .serializer import serialize_function
 class KrauncherClient:
     """Client for submitting tasks to the CaS broker.
 
+    By default all tasks are end-to-end encrypted (encrypt=True): code and
+    arguments never appear in the broker or RabbitMQ in plaintext — only
+    metadata (vram_gb, timeout, pip deps) is visible to the infrastructure.
+    Pass encrypt=False to disable E2E (e.g. for debugging).
+
     Usage::
 
         client = KrauncherClient(api_key="cas_...", broker_url="http://...")
@@ -28,9 +33,15 @@ class KrauncherClient:
         result = await handle
     """
 
-    def __init__(self, api_key: str, broker_url: str = "http://localhost:8000") -> None:
+    def __init__(
+        self,
+        api_key: str,
+        broker_url: str = "http://localhost:8000",
+        encrypt: bool = True,
+    ) -> None:
         self.api_key = api_key
         self.broker_url = broker_url.rstrip("/")
+        self.encrypt = encrypt
 
     def task(
         self,
@@ -78,15 +89,32 @@ class KrauncherClient:
                 if provider is not None:
                     requirements["provider_name"] = provider
 
-                body: dict[str, Any] = {
-                    "priority": priority,
-                    "requirements": requirements,
-                    "payload": {
+                # E2E encryption: generate ephemeral keypair, withhold plaintext code
+                ek_priv = None
+                if client.encrypt:
+                    import base64
+                    from .crypto import generate_keypair
+                    ek_priv, ek_pub_bytes = generate_keypair()
+                    ek_pub_b64 = base64.urlsafe_b64encode(ek_pub_bytes).decode().rstrip("=")
+                    payload_body: dict[str, Any] = {
+                        "code_string": "",
+                        "entry_point": entry_point,
+                        "args": {},
+                        "pip": pip or [],
+                        "encryption_key": ek_pub_b64,
+                    }
+                else:
+                    payload_body = {
                         "code_string": code_string,
                         "entry_point": entry_point,
                         "args": kwargs,
                         "pip": pip or [],
-                    },
+                    }
+
+                body: dict[str, Any] = {
+                    "priority": priority,
+                    "requirements": requirements,
+                    "payload": payload_body,
                     "data_bridge": {
                         "download_urls": data_urls or [],
                         "mount_path": "/data",
@@ -107,7 +135,13 @@ class KrauncherClient:
                     )
                     _check_response(resp)
                     task_id = resp.json()["task_id"]
-                    return TaskHandle(task_id=task_id, client=client)
+                    return TaskHandle(
+                        task_id=task_id,
+                        client=client,
+                        ek_priv=ek_priv,
+                        plaintext_code=code_string if client.encrypt else None,
+                        plaintext_args=kwargs if client.encrypt else None,
+                    )
 
             # Store metadata for introspection
             wrapper._krauncher_code = code_string

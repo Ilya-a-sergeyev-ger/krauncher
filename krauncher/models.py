@@ -140,9 +140,9 @@ def _check_response(resp: httpx.Response) -> None:
         raise KrauncherError(f"Broker returned {resp.status_code}: {detail}")
 
 
-async def _relay_stream(
+def _relay_stream_sync(
     task_id: str,
-    relay_url: str,
+    target: str,
     token: str,
     on_log: Callable[[dict[str, Any]], None],
     *,
@@ -150,36 +150,18 @@ async def _relay_stream(
     plaintext_code: str | None = None,
     plaintext_args: dict[str, Any] | None = None,
 ) -> None:
-    """Connect to relay via gRPC and feed messages to *on_log* until stream ends.
+    """Synchronous relay stream — runs in a thread pool executor.
 
-    Uses TaskStream (server-side streaming RPC) to receive messages and
-    UploadPayload (unary RPC) to deliver the E2E encrypted payload.
-
-    relay_url format: "host:port"  (scheme prefix is stripped if present).
-
-    Silently exits on any connection error — the main wait() loop continues
-    polling normally, providing automatic fallback when relay is unavailable.
+    Uses synchronous gRPC (not grpc.aio) so it is safe to call from any
+    thread with its own event loop.  Called via run_in_executor from the
+    async _relay_stream wrapper below.
     """
     try:
         import grpc
-        import grpc.aio
-    except ImportError:
-        logger.debug("[relay] grpcio not installed — run: pip install grpcio")
-        return
-
-    try:
         from . import relay_pb2, relay_pb2_grpc
     except ImportError as exc:
-        logger.debug("[relay] proto stubs not found: %s", exc)
+        logger.debug("[relay] import error: %s", exc)
         return
-
-    # Strip scheme prefix if present (e.g. legacy ws:// or grpc://)
-    target = relay_url
-    for prefix in ("grpc://", "wss://", "ws://", "https://", "http://"):
-        if target.startswith(prefix):
-            target = target[len(prefix):]
-            break
-    target = target.rstrip("/")
 
     e2e_mode = ek_priv is not None
     logger.debug("[relay] connecting task_id=%s target=%s e2e=%s", task_id[:8], target, e2e_mode)
@@ -188,16 +170,14 @@ async def _relay_stream(
     shared_key: bytes | None = None
 
     try:
-        async with grpc.aio.insecure_channel(target) as channel:
+        with grpc.insecure_channel(target) as channel:
             stub = relay_pb2_grpc.RelayStub(channel)
-
             logger.debug("[relay] TaskStream open task_id=%s", task_id[:8])
 
-            async for proto_msg in stub.TaskStream(
+            for proto_msg in stub.TaskStream(
                 relay_pb2.TaskStreamRequest(task_id=task_id),
                 metadata=metadata,
             ):
-                # Convert proto to dict (data field is raw JSON bytes)
                 try:
                     data_parsed = json.loads(proto_msg.data) if proto_msg.data else {}
                 except (json.JSONDecodeError, TypeError):
@@ -226,10 +206,7 @@ async def _relay_stream(
                     and isinstance(msg["data"], dict)
                     and msg["data"].get("name") == "key_exchange"
                 ):
-                    logger.debug(
-                        "[relay] key_exchange received task_id=%s pub_present=%s",
-                        task_id[:8], "pub" in msg["data"],
-                    )
+                    logger.debug("[relay] key_exchange received task_id=%s", task_id[:8])
                     try:
                         import base64
                         from .crypto import derive_shared_secret, encrypt
@@ -248,8 +225,7 @@ async def _relay_stream(
                             task_id[:8], len(payload_plain), len(enc_payload),
                         )
 
-                        # Upload via gRPC UploadPayload (replaces HTTP PUT)
-                        await stub.UploadPayload(
+                        stub.UploadPayload(
                             relay_pb2.UploadPayloadRequest(
                                 task_id=task_id,
                                 data=json.dumps({"enc": enc_payload}).encode(),
@@ -262,7 +238,6 @@ async def _relay_stream(
                             "[relay] key_exchange error task_id=%s: %s: %s",
                             task_id[:8], type(exc).__name__, exc,
                         )
-                    # Don't pass key_exchange to on_log — internal protocol event
                     continue
 
                 # --- E2E: decrypt data field for subsequent messages ---
@@ -295,6 +270,46 @@ async def _relay_stream(
 
     except Exception as exc:
         logger.debug("[relay] error task_id=%s: %s: %s", task_id[:8], type(exc).__name__, exc)
+
+
+async def _relay_stream(
+    task_id: str,
+    relay_url: str,
+    token: str,
+    on_log: Callable[[dict[str, Any]], None],
+    *,
+    ek_priv: Any = None,
+    plaintext_code: str | None = None,
+    plaintext_args: dict[str, Any] | None = None,
+) -> None:
+    """Async wrapper: runs synchronous gRPC relay in a thread pool executor.
+
+    relay_url format: "host:port"  (scheme prefix is stripped if present).
+
+    Silently exits on any connection error — the main wait() loop continues
+    polling normally, providing automatic fallback when relay is unavailable.
+    """
+    # Strip scheme prefix if present
+    target = relay_url
+    for prefix in ("grpc://", "wss://", "ws://", "https://", "http://"):
+        if target.startswith(prefix):
+            target = target[len(prefix):]
+            break
+    target = target.rstrip("/")
+
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(
+        None,
+        lambda: _relay_stream_sync(
+            task_id,
+            target,
+            token,
+            on_log,
+            ek_priv=ek_priv,
+            plaintext_code=plaintext_code,
+            plaintext_args=plaintext_args,
+        ),
+    )
 
 
 class TaskHandle:
