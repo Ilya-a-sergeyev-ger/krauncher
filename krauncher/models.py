@@ -140,6 +140,30 @@ def _check_response(resp: httpx.Response) -> None:
         raise KrauncherError(f"Broker returned {resp.status_code}: {detail}")
 
 
+# ---------------------------------------------------------------------------
+# Synchronous relay stream — runs in a dedicated thread per task.
+#
+# Why synchronous gRPC instead of grpc.aio?
+#
+# grpc.aio uses an internal PollerCompletionQueue that registers a
+# single fd (pipe/eventfd) with the asyncio event loop.  When multiple
+# threads each create their own asyncio event loop (as tutorial 08 does
+# with ThreadPoolExecutor + asyncio.new_event_loop()), multiple pollers
+# race for the same internal fd, causing:
+#
+#   BlockingIOError: [Errno 11] Resource temporarily unavailable
+#
+# at grpc._cython.cygrpc.PollerCompletionQueue._handle_events.
+# Messages are silently lost — TaskStream never delivers key_exchange
+# to most subscribers, and the worker times out waiting for payload.
+#
+# Solution: use plain synchronous grpc.insecure_channel + blocking
+# iteration (for msg in stub.TaskStream(...)).  Each task gets its own
+# thread via loop.run_in_executor().  All E2E operations (key exchange,
+# derive, encrypt, UploadPayload) happen on the same channel in the
+# same thread — simple, atomic, no cross-thread conflicts.
+# ---------------------------------------------------------------------------
+
 def _relay_stream_sync(
     task_id: str,
     target: str,
@@ -150,12 +174,7 @@ def _relay_stream_sync(
     plaintext_code: str | None = None,
     plaintext_args: dict[str, Any] | None = None,
 ) -> None:
-    """Synchronous relay stream — runs in a thread pool executor.
-
-    Uses synchronous gRPC (not grpc.aio) so it is safe to call from any
-    thread with its own event loop.  Called via run_in_executor from the
-    async _relay_stream wrapper below.
-    """
+    """Blocking gRPC relay stream — meant to run in a worker thread."""
     try:
         import grpc
         from . import relay_pb2, relay_pb2_grpc
