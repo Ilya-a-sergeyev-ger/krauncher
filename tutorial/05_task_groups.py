@@ -5,19 +5,15 @@ This is useful when tasks share data cached on the host, use a common
 model loaded in GPU memory, or otherwise benefit from co-location.
 
 Usage:
-    CAS_API_KEY=cas_... python tutorial/05_task_groups.py
+    Configure cas-client/.env, then: python tutorial/05_task_groups.py
 """
 
 import asyncio
-import os
 import uuid
 
 from krauncher import KrauncherClient
 
-API_KEY = os.environ.get("CAS_API_KEY", "")
-BROKER_URL = os.environ.get("CAS_BROKER_URL", "http://localhost:8000")
-
-client = KrauncherClient(api_key=API_KEY, broker_url=BROKER_URL)
+client = KrauncherClient()
 
 # All tasks in this group will be routed to the same worker
 GROUP = f"experiment-{uuid.uuid4().hex[:8]}"
@@ -54,6 +50,8 @@ async def main():
     handle1 = await step_one(value=21)
     handle2 = await step_two(value=42)
     print(f"Submitted: {handle1.task_id}, {handle2.task_id}")
+    c = handle1.classification
+    print(f"Classification: {c.tier}, VRAM={c.min_vram_gb}GB, method={c.analysis_method}, confidence={c.confidence}")
 
     # Wait for results
     result1, result2 = await asyncio.gather(handle1, handle2)

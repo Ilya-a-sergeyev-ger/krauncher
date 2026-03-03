@@ -347,6 +347,7 @@ class TaskHandle:
         ek_priv: Any = None,
         plaintext_code: str | None = None,
         plaintext_args: dict[str, Any] | None = None,
+        classification: Any = None,
     ) -> None:
         self.task_id = task_id
         self._client = client
@@ -355,6 +356,8 @@ class TaskHandle:
         self._ek_priv = ek_priv
         self._plaintext_code = plaintext_code
         self._plaintext_args = plaintext_args
+        #: Task classification result (TaskClassification or None)
+        self.classification = classification
 
     def __repr__(self) -> str:
         return f"TaskHandle(task_id={self.task_id!r})"

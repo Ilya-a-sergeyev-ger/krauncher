@@ -11,24 +11,19 @@ This pattern is useful for:
 - Verifying that autoscaling provisions enough instances
 
 Usage:
-    CAS_API_KEY=cas_... python tutorial/07_parallel_groups.py
-
-    # Custom sizes:
-    CAS_API_KEY=cas_... python tutorial/07_parallel_groups.py --groups 4 --tasks-per-group 16
+    Configure cas-client/.env, then:
+    python tutorial/07_parallel_groups.py
+    python tutorial/07_parallel_groups.py --groups 4 --tasks-per-group 16
 """
 
 import argparse
 import asyncio
-import os
 import uuid
 from collections import defaultdict
 
 from krauncher import KrauncherClient
 
-API_KEY = os.environ.get("CAS_API_KEY", "")
-BROKER_URL = os.environ.get("CAS_BROKER_URL", "http://localhost:8000")
-
-client = KrauncherClient(api_key=API_KEY, broker_url=BROKER_URL)
+client = KrauncherClient()
 
 
 def compute(task_index, group_name):
@@ -56,8 +51,8 @@ async def main():
     n_groups = args.groups
     n_tasks = args.tasks_per_group
 
-    if not API_KEY:
-        print("ERROR: Set CAS_API_KEY env var (run seed_api_key.py first)")
+    if not client.api_key:
+        print("ERROR: Set CAS_API_KEY in .env (run seed_api_key.py first)")
         return
 
     print(f"Submitting {n_groups} groups × {n_tasks} tasks = {n_groups * n_tasks} total\n")
@@ -76,7 +71,9 @@ async def main():
             handles.append((gi, ti, handle))
             print(f"  submitted G{gi}/T{ti:02d}  id={handle.task_id}")
 
-    print(f"\n{len(handles)} tasks submitted — waiting for results …\n")
+    c = handles[0][2].classification
+    print(f"\nClassification: {c.tier}, VRAM={c.min_vram_gb}GB, method={c.analysis_method}, confidence={c.confidence}")
+    print(f"{len(handles)} tasks submitted — waiting for results …\n")
 
     # ------------------------------------------------------------------
     # 2. Fan-in: gather all results concurrently

@@ -15,18 +15,15 @@ Prerequisites:
     2. Start broker:  cd cas-broker && PYTHONPATH=src uvicorn broker.main:app --port 8000
     3. Start worker:  cd cas-worker && PYTHONPATH=src python -m worker.main
     4. Install client: cd cas-client && pip install -e .
-    5. Run: CAS_API_KEY=cas_... python tutorial/12_helper_functions.py
+    5. Configure:     cas-client/.env (CAS_API_KEY, CAS_BROKER_URL, ...)
+    6. Run: python tutorial/12_helper_functions.py
 """
 
 import asyncio
-import os
 
 from krauncher import KrauncherClient
 
-client = KrauncherClient(
-    api_key=os.environ.get("CAS_API_KEY", ""),
-    broker_url=os.environ.get("CAS_BROKER_URL", "http://localhost:8000"),
-)
+client = KrauncherClient()
 
 
 # ── Helper functions (same module, NOT inside the task) ─────────────
@@ -74,9 +71,8 @@ def analyze(raw_data: list[float], window: int = 3):
 
 
 async def main():
-    api_key = os.environ.get("CAS_API_KEY")
-    if not api_key:
-        print("ERROR: Set CAS_API_KEY env var (run seed_api_key.py first)")
+    if not client.api_key:
+        print("ERROR: Set CAS_API_KEY in .env (run seed_api_key.py first)")
         return
 
     raw = [10.0, 25.0, 13.0, 42.0, 8.0, 37.0, 19.0, 50.0, 5.0, 30.0]
@@ -85,6 +81,8 @@ async def main():
     print(f"Submitting task with {3} helper functions...")
     handle = await analyze(raw_data=raw, window=4)
     print(f"Task submitted: {handle.task_id}")
+    c = handle.classification
+    print(f"Classification: {c.tier}, VRAM={c.min_vram_gb}GB, method={c.analysis_method}, confidence={c.confidence}")
 
     print("Waiting for result...")
     result = await handle

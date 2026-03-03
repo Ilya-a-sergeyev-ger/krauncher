@@ -1,7 +1,7 @@
 """Tutorial 09: Real-time log streaming via cas-relay.
 
 Submits a training-loop task that prints per-epoch progress to stdout.
-With on_log=, the client receives each line in real time via WebSocket
+With on_log=, the client receives each line in real time via gRPC
 while the task is still executing — no need to wait for completion.
 
 Prerequisites:
@@ -10,21 +10,18 @@ Prerequisites:
     3. Start worker:  cd cas-worker && PYTHONPATH=src python -m worker.main
     4. Start relay:   /opt/cas-relay/run.sh
     5. Install client: cd cas-client && pip install -e .
-    6. Run: CAS_API_KEY=cas_... python tutorial/09_streaming_logs.py
+    6. Configure:     cas-client/.env (CAS_API_KEY, CAS_BROKER_URL, ...)
+    7. Run: python tutorial/09_streaming_logs.py
 """
 
 import asyncio
-import os
 
 from krauncher import KrauncherClient
 
-client = KrauncherClient(
-    api_key=os.environ.get("CAS_API_KEY", ""),
-    broker_url=os.environ.get("CAS_BROKER_URL", "http://localhost:8000"),
-)
+client = KrauncherClient()
 
 
-@client.task(vram_gb=2, timeout=120)
+@client.task(timeout=120)
 def train_model(epochs: int, size: int):
     """Mini training loop — prints epoch stats to stdout as it runs."""
     import time
@@ -77,14 +74,15 @@ def on_log(msg: dict) -> None:
 
 
 async def main():
-    api_key = os.environ.get("CAS_API_KEY")
-    if not api_key:
-        print("ERROR: Set CAS_API_KEY env var (run seed_api_key.py first)")
+    if not client.api_key:
+        print("ERROR: Set CAS_API_KEY in .env (run seed_api_key.py first)")
         return
 
     print("Submitting training task (10 epochs)...")
     handle = await train_model(epochs=10, size=256)
     print(f"Task ID: {handle.task_id}")
+    c = handle.classification
+    print(f"Classification: {c.tier}, VRAM={c.min_vram_gb}GB, method={c.analysis_method}, confidence={c.confidence}")
     print("─" * 50)
 
     result = await handle.wait(on_log=on_log)

@@ -16,22 +16,17 @@ Protocol:
   9. Relay stdout/stderr stream is also encrypted.
 
 Usage:
-    CAS_API_KEY=cas_... python -m krauncher.tutorial.11_e2e_encryption
+    Configure cas-client/.env, then: python tutorial/11_e2e_encryption.py
 """
 
 import asyncio
-import os
 
 from krauncher import KrauncherClient
 
-
-API_KEY = os.environ.get("CAS_API_KEY", "")
-BROKER_URL = os.environ.get("CAS_BROKER_URL", "http://localhost:8000")
-
-_client = KrauncherClient(api_key=API_KEY, broker_url=BROKER_URL)
+_client = KrauncherClient()
 
 
-@_client.task(vram_gb=4, timeout=120)
+@_client.task(vram_gb=1, timeout=120)
 def secret_computation(secret_value: int, multiplier: int) -> dict:
     """This function body never appears in RabbitMQ or broker logs."""
     import hashlib
@@ -43,8 +38,8 @@ def secret_computation(secret_value: int, multiplier: int) -> dict:
 
 
 async def main() -> None:
-    if not API_KEY:
-        raise SystemExit("Set CAS_API_KEY environment variable")
+    if not _client.api_key:
+        raise SystemExit("Set CAS_API_KEY in .env (run seed_api_key.py first)")
 
     print("Submitting task with E2E encryption enabled...")
     print("  code_string is withheld from broker — only ek_pub is sent\n")
@@ -66,6 +61,8 @@ async def main() -> None:
 
     handle = await secret_computation(secret_value=12345, multiplier=67890)
     print(f"Task submitted: {handle.task_id}")
+    c = handle.classification
+    print(f"Classification: {c.tier}, VRAM={c.min_vram_gb}GB, method={c.analysis_method}, confidence={c.confidence}")
     print("Waiting for key_exchange and payload upload...\n")
 
     result = await handle.wait(on_log=on_log, timeout=180)

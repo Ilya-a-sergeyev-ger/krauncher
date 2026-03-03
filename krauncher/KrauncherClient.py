@@ -3,28 +3,51 @@
 from __future__ import annotations
 
 import functools
+import os
 from typing import Any, Callable
 
 import httpx
 
+from .analyzer import (
+    AnalyzerClient,
+    TaskClassification,
+    classify_explicit,
+    classify_safety_net,
+)
 from .exceptions import KrauncherError
 from .models import Runner, TaskHandle, _check_response
 from .serializer import serialize_function
+
+# Sentinel to distinguish "not passed" from explicit None
+_UNSET: Any = object()
 
 
 class KrauncherClient:
     """Client for submitting tasks to the CaS broker.
 
-    By default all tasks are end-to-end encrypted (encrypt=True): code and
-    arguments never appear in the broker or RabbitMQ in plaintext — only
-    metadata (vram_gb, timeout, pip deps) is visible to the infrastructure.
-    Pass encrypt=False to disable E2E (e.g. for debugging).
+    All parameters can be set via environment variables (or ``.env`` file in CWD).
+    Explicit constructor arguments always take priority.
+
+    ================ ====================== ==========================================
+    Parameter        Env var                Default
+    ================ ====================== ==========================================
+    api_key          CAS_API_KEY            (required)
+    broker_url       CAS_BROKER_URL         http://localhost:8000
+    encrypt          CAS_ENCRYPT            true
+    analyzer_url     CAS_ANALYZER_URL       None (no analyzer → safety net)
+    encrypt_analyzer CAS_ENCRYPT_ANALYZER   true
+    analyzer_timeout CAS_ANALYZER_TIMEOUT   10.0
+    ================ ====================== ==========================================
 
     Usage::
 
+        # All config from .env:
+        client = KrauncherClient()
+
+        # Or explicit:
         client = KrauncherClient(api_key="cas_...", broker_url="http://...")
 
-        @client.task(vram_gb=24, timeout=3600)
+        @client.task(timeout=3600)
         def train(data):
             import torch
             return {"loss": 0.01}
@@ -35,18 +58,49 @@ class KrauncherClient:
 
     def __init__(
         self,
-        api_key: str,
-        broker_url: str = "http://localhost:8000",
-        encrypt: bool = True,
+        api_key: str | None = None,
+        broker_url: str | None = None,
+        encrypt: bool | None = None,
+        analyzer_url: Any = _UNSET,
+        encrypt_analyzer: bool | None = None,
+        analyzer_timeout: float | None = None,
     ) -> None:
-        self.api_key = api_key
-        self.broker_url = broker_url.rstrip("/")
-        self.encrypt = encrypt
+        self.api_key = api_key or os.environ.get("CAS_API_KEY", "")
+        self.broker_url = (broker_url or os.environ.get("CAS_BROKER_URL", "http://localhost:8000")).rstrip("/")
+
+        if encrypt is not None:
+            self.encrypt = encrypt
+        else:
+            self.encrypt = os.environ.get("CAS_ENCRYPT", "true").lower() not in ("0", "false", "no")
+
+        if analyzer_url is not _UNSET:
+            self._analyzer_url = analyzer_url
+        else:
+            self._analyzer_url = os.environ.get("CAS_ANALYZER_URL") or None
+
+        if encrypt_analyzer is not None:
+            self._encrypt_analyzer = encrypt_analyzer
+        else:
+            self._encrypt_analyzer = os.environ.get("CAS_ENCRYPT_ANALYZER", "true").lower() not in ("0", "false", "no")
+
+        self._analyzer_timeout = analyzer_timeout or float(os.environ.get("CAS_ANALYZER_TIMEOUT", "10.0"))
+        self._analyzer_client: AnalyzerClient | None = None
+
+    @property
+    def _analyzer(self) -> AnalyzerClient | None:
+        """Lazy-init AnalyzerClient."""
+        if self._analyzer_url and self._analyzer_client is None:
+            self._analyzer_client = AnalyzerClient(
+                analyzer_url=self._analyzer_url,
+                encrypt=self._encrypt_analyzer,
+                timeout=self._analyzer_timeout,
+            )
+        return self._analyzer_client
 
     def task(
         self,
         *,
-        vram_gb: int = 8,
+        vram_gb: int | None = None,
         gpu_arch: str = "Ampere+",
         pip: list[str] | None = None,
         timeout: int = 600,
@@ -61,7 +115,8 @@ class KrauncherClient:
         to the broker and returns a :class:`TaskHandle`.
 
         Args:
-            vram_gb: Minimum GPU VRAM in GB.
+            vram_gb: Minimum GPU VRAM in GB.  ``None`` = auto-classify via
+                cas-analyzer (or safety net if unavailable).
             gpu_arch: Required GPU architecture (e.g. ``"Ampere+"``).
             pip: Pip packages to install in the sandbox before execution.
             timeout: Execution timeout in seconds.
@@ -82,8 +137,21 @@ class KrauncherClient:
 
             @functools.wraps(func)
             async def wrapper(**kwargs: Any) -> TaskHandle:
+                # Classification: Level 1 (explicit) → Level 2 (analyzer) → Level 3 (safety net)
+                if vram_gb is not None:
+                    classification = classify_explicit(vram_gb)
+                elif client._analyzer:
+                    try:
+                        classification = await client._analyzer.classify(code_string)
+                    except Exception as exc:
+                        import logging as _log
+                        _log.getLogger("krauncher").warning("Analyzer failed, using safety net: %s", exc)
+                        classification = classify_safety_net()
+                else:
+                    classification = classify_safety_net()
+
                 requirements: dict[str, Any] = {
-                    "min_vram_gb": vram_gb,
+                    "min_vram_gb": classification.min_vram_gb,
                     "gpu_arch": gpu_arch,
                 }
                 if provider is not None:
@@ -127,6 +195,8 @@ class KrauncherClient:
                 if group_id is not None:
                     body["group_id"] = group_id
 
+                body["classification"] = classification.to_dict()
+
                 async with httpx.AsyncClient(timeout=30.0) as session:
                     resp = await session.post(
                         f"{client.broker_url}/tasks",
@@ -141,6 +211,7 @@ class KrauncherClient:
                         ek_priv=ek_priv,
                         plaintext_code=code_string if client.encrypt else None,
                         plaintext_args=kwargs if client.encrypt else None,
+                        classification=classification,
                     )
 
             # Store metadata for introspection

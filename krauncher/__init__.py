@@ -20,6 +20,10 @@ Usage::
 import logging as _logging
 import os as _os
 
+# Load .env from CWD before anything else (does NOT override existing vars)
+from ._env import load_dotenv as _load_dotenv
+_load_dotenv()
+
 if _os.getenv("KRAUNCHER_DEBUG", "").lower() in ("1", "true", "yes"):
     _handler = _logging.StreamHandler()
     _handler.setFormatter(_logging.Formatter("%(message)s"))
@@ -36,11 +40,13 @@ from .exceptions import (
     TaskError,
     TaskTimeout,
 )
+from .analyzer import TaskClassification
 from .KrauncherClient import KrauncherClient
 from .models import Runner, TaskHandle, TaskResult
 
 __all__ = [
     "KrauncherClient",
+    "TaskClassification",
     "Runner",
     "TaskHandle",
     "TaskResult",

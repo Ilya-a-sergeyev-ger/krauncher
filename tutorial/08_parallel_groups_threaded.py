@@ -5,23 +5,18 @@ from a dedicated thread, so all groups fire concurrently.  This
 stresses the broker's group routing under real concurrent load.
 
 Usage:
-    CAS_API_KEY=cas_... python tutorial/08_parallel_groups_threaded.py
-
-    # Custom sizes:
-    CAS_API_KEY=cas_... python tutorial/08_parallel_groups_threaded.py --groups 4 --tasks-per-group 4
+    Configure cas-client/.env, then:
+    python tutorial/08_parallel_groups_threaded.py
+    python tutorial/08_parallel_groups_threaded.py --groups 4 --tasks-per-group 4
 """
 
 import argparse
 import asyncio
-import os
 import uuid
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from krauncher import KrauncherClient
-
-API_KEY = os.environ.get("CAS_API_KEY", "")
-BROKER_URL = os.environ.get("CAS_BROKER_URL", "http://localhost:8000")
 
 
 def compute(task_index, group_name):
@@ -45,7 +40,7 @@ def _run_group(gi: int, group_id: str, n_tasks: int) -> list[tuple[int, int, str
     Each successful result is a TaskResult object.
     """
     loop = asyncio.new_event_loop()
-    client = KrauncherClient(api_key=API_KEY, broker_url=BROKER_URL)
+    client = KrauncherClient()
     task_fn = client.task(vram_gb=1, timeout=120, group_id=group_id)(compute)
 
     async def _submit_and_wait():
@@ -54,6 +49,9 @@ def _run_group(gi: int, group_id: str, n_tasks: int) -> list[tuple[int, int, str
             handle = await task_fn(task_index=ti, group_name=f"G{gi}")
             handles.append((ti, handle))
             print(f"  submitted G{gi}/T{ti:02d}  id={handle.task_id}")
+            if ti == 0:
+                c = handle.classification
+                print(f"  G{gi} classification: {c.tier}, VRAM={c.min_vram_gb}GB, method={c.analysis_method}")
 
         results = []
         settled = await asyncio.gather(*[h for _, h in handles], return_exceptions=True)
@@ -78,8 +76,8 @@ def main():
     n_groups = args.groups
     n_tasks = args.tasks_per_group
 
-    if not API_KEY:
-        print("ERROR: Set CAS_API_KEY env var (run seed_api_key.py first)")
+    if not KrauncherClient().api_key:
+        print("ERROR: Set CAS_API_KEY in .env (run seed_api_key.py first)")
         return
 
     print(f"Submitting {n_groups} groups × {n_tasks} tasks = {n_groups * n_tasks} total")

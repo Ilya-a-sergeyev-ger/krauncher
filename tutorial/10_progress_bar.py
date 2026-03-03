@@ -10,23 +10,20 @@ Prerequisites:
     3. Start worker:  cd cas-worker && PYTHONPATH=src python -m worker.main
     4. Start relay:   /opt/cas-relay/run.sh
     5. Install client: cd cas-client && pip install -e .
-    6. Run: CAS_API_KEY=cas_... python tutorial/10_progress_bar.py
+    6. Configure:     cas-client/.env (CAS_API_KEY, CAS_BROKER_URL, ...)
+    7. Run: python tutorial/10_progress_bar.py
 """
 
 import asyncio
-import os
 
 from krauncher import KrauncherClient
 
-client = KrauncherClient(
-    api_key=os.environ.get("CAS_API_KEY", ""),
-    broker_url=os.environ.get("CAS_BROKER_URL", "http://localhost:8000"),
-)
+client = KrauncherClient()
 
 BAR_WIDTH = 25
 
 
-@client.task(vram_gb=2, timeout=120)
+@client.task(timeout=120)
 def train_with_progress(epochs: int, n_batches: int, size: int):
     """Training loop with per-batch progress bar rendered via \\r."""
     import time
@@ -93,9 +90,8 @@ def on_log(msg: dict) -> None:
 
 
 async def main():
-    api_key = os.environ.get("CAS_API_KEY")
-    if not api_key:
-        print("ERROR: Set CAS_API_KEY env var (run seed_api_key.py first)")
+    if not client.api_key:
+        print("ERROR: Set CAS_API_KEY in .env (run seed_api_key.py first)")
         return
 
     epochs = 5
@@ -103,6 +99,8 @@ async def main():
     print(f"Submitting training task ({epochs} epochs × {n_batches} batches)...")
     handle = await train_with_progress(epochs=epochs, n_batches=n_batches, size=128)
     print(f"Task ID: {handle.task_id}")
+    c = handle.classification
+    print(f"Classification: {c.tier}, VRAM={c.min_vram_gb}GB, method={c.analysis_method}, confidence={c.confidence}")
     print("─" * 55)
 
     result = await handle.wait(on_log=on_log)
