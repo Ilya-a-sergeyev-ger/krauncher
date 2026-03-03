@@ -40,7 +40,6 @@ class TaskClassification:
             "tier": self.tier,
             "confidence": self.confidence,
             "analysis_method": self.analysis_method,
-            "performance_table": self.performance_table,
         }
         if self.compute_units is not None:
             d["compute_units"] = self.compute_units
