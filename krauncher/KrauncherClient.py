@@ -137,10 +137,9 @@ class KrauncherClient:
 
             @functools.wraps(func)
             async def wrapper(**kwargs: Any) -> TaskHandle:
-                # Classification: Level 1 (explicit) → Level 2 (analyzer) → Level 3 (safety net)
-                if vram_gb is not None:
-                    classification = classify_explicit(vram_gb)
-                elif client._analyzer:
+                # Classification: always call analyzer for compute_units/duration,
+                # then override vram with explicit value if provided.
+                if client._analyzer:
                     try:
                         classification = await client._analyzer.classify(code_string)
                     except Exception as exc:
@@ -149,6 +148,15 @@ class KrauncherClient:
                         classification = classify_safety_net()
                 else:
                     classification = classify_safety_net()
+
+                if vram_gb is not None:
+                    # Level 1 override: keep analyzer's compute_units/duration/perf_table,
+                    # but force vram_gb (with 10% headroom) and recalculate tier
+                    explicit = classify_explicit(vram_gb)
+                    classification.min_vram_gb = explicit.min_vram_gb
+                    classification.tier = explicit.tier
+                    classification.confidence = explicit.confidence
+                    classification.analysis_method = explicit.analysis_method
 
                 requirements: dict[str, Any] = {
                     "min_vram_gb": classification.min_vram_gb,
