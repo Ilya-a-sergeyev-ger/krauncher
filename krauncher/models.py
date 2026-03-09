@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 import httpx
 
-from .exceptions import AuthError, KrauncherError, RemoteTimeout, TaskError, TaskTimeout
+from .exceptions import AuthError, KrauncherError, PayloadDeliveryError, RemoteTimeout, TaskError, TaskTimeout
 
 if TYPE_CHECKING:
     from .KrauncherClient import KrauncherClient
@@ -521,6 +521,8 @@ class TaskHandle:
             raise RemoteTimeout(task_id=result.task_id)
 
         if result.status == "failed":
+            if result.stderr == "e2e_payload_timeout":
+                raise PayloadDeliveryError(task_id=result.task_id)
             raise TaskError(
                 f"Task {result.task_id} failed",
                 task_id=result.task_id,

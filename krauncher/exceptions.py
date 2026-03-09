@@ -49,6 +49,25 @@ class RemoteTimeout(TaskError):
         )
 
 
+class PayloadDeliveryError(TaskError):
+    """Raised when the encrypted payload could not be delivered to the worker.
+
+    This typically means the client could not establish a relay connection
+    in time (e.g. due to high concurrency or network issues).  The task
+    was not executed and you were not charged.  Retrying usually helps.
+    """
+
+    def __init__(self, task_id: str) -> None:
+        super().__init__(
+            "Could not deliver task payload to the worker — the secure "
+            "channel was not established in time. The task was not executed "
+            "and no charges were applied. This can happen under heavy load; "
+            "please retry.",
+            task_id=task_id,
+            remote_traceback=None,
+        )
+
+
 class TaskTimeout(KrauncherError):
     """Raised when TaskHandle.wait() exceeds its timeout."""
 

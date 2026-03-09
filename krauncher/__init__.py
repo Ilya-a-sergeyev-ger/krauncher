@@ -35,6 +35,7 @@ if _os.getenv("KRAUNCHER_DEBUG", "").lower() in ("1", "true", "yes"):
 from .exceptions import (
     AuthError,
     KrauncherError,
+    PayloadDeliveryError,
     RemoteTimeout,
     SerializationError,
     TaskError,
@@ -54,6 +55,7 @@ __all__ = [
     "AuthError",
     "TaskError",
     "TaskTimeout",
+    "PayloadDeliveryError",
     "RemoteTimeout",
     "SerializationError",
 ]
