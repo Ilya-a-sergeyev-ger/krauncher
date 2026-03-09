@@ -135,23 +135,34 @@ class KrauncherClient:
             # Serialize at decoration time — fail fast on invalid functions
             code_string, entry_point = serialize_function(func)
 
+            # Cache analyzer result per decorated function — the code_string
+            # never changes, so re-analyzing on every call is wasteful and
+            # causes timeouts under concurrent load.
+            _cached_classification: list[TaskClassification | None] = [None]
+
             @functools.wraps(func)
             async def wrapper(**kwargs: Any) -> TaskHandle:
-                # Classification: always call analyzer for compute_units/duration,
-                # then override vram with explicit value if provided.
-                if client._analyzer:
+                # Classification: call analyzer once, cache for subsequent calls.
+                if _cached_classification[0] is not None:
+                    classification = _cached_classification[0]
+                elif client._analyzer:
                     try:
                         classification = await client._analyzer.classify(code_string)
                     except Exception as exc:
                         import logging as _log
                         _log.getLogger("krauncher").warning("Analyzer failed, using safety net: %s", exc)
                         classification = classify_safety_net()
+                    _cached_classification[0] = classification
                 else:
                     classification = classify_safety_net()
+                    _cached_classification[0] = classification
 
                 if vram_gb is not None:
                     # Level 1 override: keep analyzer's compute_units/duration/perf_table,
-                    # but force vram_gb (with 10% headroom) and recalculate tier
+                    # but force vram_gb (with 10% headroom) and recalculate tier.
+                    # Copy first — cached classification is shared across calls.
+                    import dataclasses
+                    classification = dataclasses.replace(classification)
                     explicit = classify_explicit(vram_gb)
                     classification.min_vram_gb = explicit.min_vram_gb
                     classification.tier = explicit.tier
