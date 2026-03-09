@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import json
 import logging
 from dataclasses import dataclass
@@ -57,6 +58,15 @@ class Runner:
         )
 
 logger = logging.getLogger(__name__)
+
+# Dedicated thread pool for blocking gRPC relay streams.
+# The default executor is min(32, cpu_count+4) which saturates when many
+# tasks run concurrently — queued threads can't receive key_exchange in
+# time, causing e2e_payload_timeout on the worker side.
+_relay_executor = concurrent.futures.ThreadPoolExecutor(
+    max_workers=128,
+    thread_name_prefix="relay-stream",
+)
 
 
 @dataclass(frozen=True)
@@ -318,7 +328,7 @@ async def _relay_stream(
 
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(
-        None,
+        _relay_executor,
         lambda: _relay_stream_sync(
             task_id,
             target,
