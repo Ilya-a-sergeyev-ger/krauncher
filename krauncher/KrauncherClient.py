@@ -32,7 +32,7 @@ class KrauncherClient:
     Parameter        Env var                Default
     ================ ====================== ==========================================
     api_key          CAS_API_KEY            (required)
-    broker_url       CAS_BROKER_URL         http://localhost:8000
+    broker_url       CAS_BROKER_URL         https://krauncher.com
     encrypt          CAS_ENCRYPT            true
     analyzer_url     CAS_ANALYZER_URL       None (no analyzer → safety net)
     encrypt_analyzer CAS_ENCRYPT_ANALYZER   true
@@ -66,7 +66,7 @@ class KrauncherClient:
         analyzer_timeout: float | None = None,
     ) -> None:
         self.api_key = api_key or os.environ.get("CAS_API_KEY", "")
-        self.broker_url = (broker_url or os.environ.get("CAS_BROKER_URL", "http://localhost:8000")).rstrip("/")
+        self.broker_url = (broker_url or os.environ.get("CAS_BROKER_URL", "https://krauncher.com")).rstrip("/")
 
         if encrypt is not None:
             self.encrypt = encrypt
