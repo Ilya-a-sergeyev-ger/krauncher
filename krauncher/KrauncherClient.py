@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import functools
 import os
+import time
 from typing import Any, Callable
 
 import httpx
@@ -21,6 +22,9 @@ from .serializer import serialize_function
 # Sentinel to distinguish "not passed" from explicit None
 _UNSET: Any = object()
 
+# Default TTL for broker config cache (seconds)
+_CONFIG_CACHE_TTL: float = 900.0  # 15 minutes
+
 
 class KrauncherClient:
     """Client for submitting tasks to the CaS broker.
@@ -34,10 +38,12 @@ class KrauncherClient:
     api_key          CAS_API_KEY            (required)
     broker_url       CAS_BROKER_URL         https://krauncher.com
     encrypt          CAS_ENCRYPT            true
-    analyzer_url     CAS_ANALYZER_URL       None (no analyzer → safety net)
     encrypt_analyzer CAS_ENCRYPT_ANALYZER   true
     analyzer_timeout CAS_ANALYZER_TIMEOUT   10.0
     ================ ====================== ==========================================
+
+    Analyzer URL is resolved from the broker (``GET /v1/me → analyzer_url``).
+    Configure analyzer endpoints in the admin panel.
 
     Usage::
 
@@ -73,10 +79,9 @@ class KrauncherClient:
         else:
             self.encrypt = os.environ.get("CAS_ENCRYPT", "true").lower() not in ("0", "false", "no")
 
-        if analyzer_url is not _UNSET:
-            self._analyzer_url = analyzer_url
-        else:
-            self._analyzer_url = os.environ.get("CAS_ANALYZER_URL") or None
+        # analyzer_url is resolved exclusively from the broker (/v1/me).
+        # The constructor parameter is kept only for tests / edge cases.
+        self._analyzer_url_override = analyzer_url if analyzer_url is not _UNSET else None
 
         if encrypt_analyzer is not None:
             self._encrypt_analyzer = encrypt_analyzer
@@ -86,15 +91,77 @@ class KrauncherClient:
         self._analyzer_timeout = analyzer_timeout or float(os.environ.get("CAS_ANALYZER_TIMEOUT", "10.0"))
         self._analyzer_client: AnalyzerClient | None = None
 
-    @property
-    def _analyzer(self) -> AnalyzerClient | None:
-        """Lazy-init AnalyzerClient."""
-        if self._analyzer_url and self._analyzer_client is None:
-            self._analyzer_client = AnalyzerClient(
-                analyzer_url=self._analyzer_url,
-                encrypt=self._encrypt_analyzer,
-                timeout=self._analyzer_timeout,
+        # Broker config cache (populated by _fetch_broker_config)
+        self._config_cache: dict[str, Any] | None = None
+        self._config_cache_ts: float = 0.0
+
+    def _get_analyzer_url(self) -> str:
+        """Return the analyzer URL from broker config.
+
+        Raises KrauncherError if no analyzer is configured.
+        """
+        if self._analyzer_url_override is not None:
+            return self._analyzer_url_override
+        config = self._get_broker_config()
+        url = config.get("analyzer_url")
+        if not url:
+            raise KrauncherError(
+                "No analyzer endpoint configured on the broker. "
+                "An admin must add an active analyzer in the admin panel "
+                "(Admin → Resources → Analyzers)."
             )
+        return url
+
+    def _get_broker_config(self) -> dict[str, Any]:
+        """Return cached broker config, refreshing if TTL expired.
+
+        Raises KrauncherError if the broker is unreachable and no cached
+        config is available.
+        """
+        import logging as _log
+        _logger = _log.getLogger("krauncher")
+
+        now = time.monotonic()
+        if self._config_cache is not None and (now - self._config_cache_ts) < _CONFIG_CACHE_TTL:
+            return self._config_cache
+        try:
+            import httpx as _httpx
+            with _httpx.Client(timeout=10.0) as client:
+                resp = client.get(
+                    f"{self.broker_url}/v1/me",
+                    headers={"X-API-Key": self.api_key},
+                )
+                if resp.status_code == 200:
+                    self._config_cache = resp.json()
+                    self._config_cache_ts = now
+                    return self._config_cache
+                _logger.warning("Broker returned %d for GET /v1/me", resp.status_code)
+        except Exception as exc:
+            _logger.warning("Cannot reach broker at %s: %s", self.broker_url, exc)
+
+        if self._config_cache is not None:
+            return self._config_cache  # stale cache on transient failure
+
+        raise KrauncherError(
+            f"Cannot reach broker at {self.broker_url}/v1/me — "
+            "check broker_url and api_key."
+        )
+
+    @property
+    def _analyzer(self) -> AnalyzerClient:
+        """Lazy-init AnalyzerClient using broker-provided URL.
+
+        Raises KrauncherError if no analyzer is available.
+        """
+        url = self._get_analyzer_url()  # raises on missing
+        # Re-create client if URL changed
+        if self._analyzer_client is not None and self._analyzer_client._url == url.rstrip("/"):
+            return self._analyzer_client
+        self._analyzer_client = AnalyzerClient(
+            analyzer_url=url,
+            encrypt=self._encrypt_analyzer,
+            timeout=self._analyzer_timeout,
+        )
         return self._analyzer_client
 
     def task(
@@ -145,16 +212,16 @@ class KrauncherClient:
                 # Classification: call analyzer once, cache for subsequent calls.
                 if _cached_classification[0] is not None:
                     classification = _cached_classification[0]
-                elif client._analyzer:
+                else:
+                    # _analyzer raises KrauncherError if no analyzer configured
                     try:
                         classification = await client._analyzer.classify(code_string)
+                    except KrauncherError:
+                        raise
                     except Exception as exc:
-                        import logging as _log
-                        _log.getLogger("krauncher").warning("Analyzer failed, using safety net: %s", exc)
-                        classification = classify_safety_net()
-                    _cached_classification[0] = classification
-                else:
-                    classification = classify_safety_net()
+                        raise KrauncherError(
+                            f"Analyzer failed and CU estimation is unavailable: {exc}"
+                        ) from exc
                     _cached_classification[0] = classification
 
                 if vram_gb is not None:
