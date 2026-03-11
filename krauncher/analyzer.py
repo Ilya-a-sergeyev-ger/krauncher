@@ -139,6 +139,11 @@ class AnalyzerClient:
         retry: bool,
     ) -> TaskClassification:
         import asyncio
+        import logging as _log
+        import time as _time
+
+        _logger = _log.getLogger("krauncher")
+        t0 = _time.monotonic()
 
         async with httpx.AsyncClient(timeout=self._timeout) as session:
             # Build request body
@@ -175,7 +180,14 @@ class AnalyzerClient:
                 data = poll_resp.json()
 
                 if data["status"] == "done":
-                    return self._parse_result(data["result"])
+                    elapsed = _time.monotonic() - t0
+                    result = self._parse_result(data["result"])
+                    _logger.info(
+                        "Analyzer response in %.2fs: tier=%s, vram=%dGB, CU=%s, method=%s",
+                        elapsed, result.tier, result.min_vram_gb,
+                        result.compute_units, result.analysis_method,
+                    )
+                    return result
                 elif data["status"] == "failed":
                     raise RuntimeError(f"Analyzer failed: {data.get('error', 'unknown')}")
                 elif asyncio.get_event_loop().time() > deadline:

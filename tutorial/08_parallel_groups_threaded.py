@@ -68,9 +68,7 @@ def _run_group(gi: int, group_id: str, n_tasks: int) -> list[tuple[int, int, str
 def main():
     parser = argparse.ArgumentParser(description="Parallel task groups demo (threaded)")
     parser.add_argument("--groups", type=int, default=4, help="Number of groups")
-    parser.add_argument(
-        "--tasks-per-group", type=int, default=8, help="Tasks per group"
-    )
+    parser.add_argument("--tasks-per-group", type=int, default=4, help="Tasks per group")
     args = parser.parse_args()
 
     n_groups = args.groups
