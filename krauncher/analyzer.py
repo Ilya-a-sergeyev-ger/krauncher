@@ -124,19 +124,21 @@ class AnalyzerClient:
         self,
         code: str,
         dataset_mb: int | None = None,
+        kwargs: dict | None = None,
     ) -> TaskClassification:
         """Call cas-analyzer and return classification.
 
         On decryption error, invalidates cached pubkey and retries once.
         Raises on any other error (caller handles fallback).
         """
-        return await self._classify_inner(code, dataset_mb, retry=True)
+        return await self._classify_inner(code, dataset_mb, kwargs=kwargs, retry=True)
 
     async def _classify_inner(
         self,
         code: str,
         dataset_mb: int | None,
         retry: bool,
+        kwargs: dict | None = None,
     ) -> TaskClassification:
         import asyncio
         import logging as _log
@@ -150,6 +152,14 @@ class AnalyzerClient:
             body: dict = {}
             if dataset_mb is not None:
                 body["dataset_mb"] = dataset_mb
+            if kwargs:
+                # Filter to JSON-safe scalar values only
+                safe_kwargs = {
+                    k: v for k, v in kwargs.items()
+                    if isinstance(v, (int, float, bool, str))
+                }
+                if safe_kwargs:
+                    body["kwargs"] = safe_kwargs
 
             if self._encrypt:
                 pub_bytes = await self._fetch_pubkey(session)
@@ -167,7 +177,7 @@ class AnalyzerClient:
             if resp.status_code == 400 and retry and self._encrypt:
                 # Possible key rotation — clear cache and retry once
                 self._analyzer_pubkey = None
-                return await self._classify_inner(code, dataset_mb, retry=False)
+                return await self._classify_inner(code, dataset_mb, kwargs=kwargs, retry=False)
             resp.raise_for_status()
             job_id = resp.json()["job_id"]
 

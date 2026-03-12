@@ -215,7 +215,7 @@ class KrauncherClient:
                 else:
                     # _analyzer raises KrauncherError if no analyzer configured
                     try:
-                        classification = await client._analyzer.classify(code_string)
+                        classification = await client._analyzer.classify(code_string, kwargs=kwargs)
                     except KrauncherError:
                         raise
                     except Exception as exc:
