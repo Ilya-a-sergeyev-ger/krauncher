@@ -173,6 +173,9 @@ class KrauncherClient:
         timeout: int = 600,
         priority: int = 1,
         data_urls: list[str] | None = None,
+        data: str | None = None,
+        output: str | None = None,
+        volume: str | None = None,
         group_id: str | None = None,
         provider: str | None = None,
     ) -> Callable:
@@ -189,6 +192,12 @@ class KrauncherClient:
             timeout: Execution timeout in seconds.
             priority: Task priority (0 = highest, 10 = lowest).
             data_urls: URLs for data bridge downloads into ``/data``.
+            data: Registered data source name — broker resolves URLs and
+                credentials from the database.  Downloads into ``/data``.
+            output: Registered output data source name (is_output=True) —
+                broker resolves upload destination.  Task writes to ``/output``.
+            volume: Persistent volume name — S3-backed storage synced to
+                ``/volume`` before execution and pushed back after.
             group_id: Task group ID for host affinity — tasks with the
                 same group_id are routed to the same worker.
             provider: Pin task to a specific provider (e.g. ``"runpod"`` or
@@ -280,6 +289,12 @@ class KrauncherClient:
 
                 if group_id is not None:
                     body["group_id"] = group_id
+                if data is not None:
+                    body["data"] = data
+                if output is not None:
+                    body["output"] = output
+                if volume is not None:
+                    body["volume"] = volume
 
                 body["classification"] = classification.to_dict()
 
