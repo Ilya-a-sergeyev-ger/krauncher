@@ -15,9 +15,11 @@ from .analyzer import (
     classify_explicit,
     classify_safety_net,
 )
+from .data_source import DataSource
 from .exceptions import KrauncherError
 from .models import Runner, TaskHandle, _check_response
 from .serializer import serialize_function
+from .volume import Volume
 
 # Sentinel to distinguish "not passed" from explicit None
 _UNSET: Any = object()
@@ -324,6 +326,47 @@ class KrauncherClient:
             return wrapper
 
         return decorator
+
+    def data_source(
+        self,
+        name: str,
+        urls: list[str] | None = None,
+        size_gb: float = 0,
+        description: str | None = None,
+        is_output: bool = False,
+    ) -> DataSource:
+        """Create or get a registered data source.
+
+        If *urls* is provided, registers a new data source on the broker.
+        Otherwise returns a handle to an existing source (for inspection
+        or deletion).
+
+        Args:
+            name: Unique name for the data source.
+            urls: S3 or HTTP URLs to register.
+            size_gb: Declared data size in GB.
+            description: Optional description.
+            is_output: If ``True``, this source is used for uploading task results.
+
+        Returns:
+            A :class:`DataSource` handle.
+        """
+        return DataSource(self, name, urls, size_gb, description, is_output)
+
+    def volume(self, name: str, size_gb: int = 5) -> Volume:
+        """Create or get a persistent volume.
+
+        Ensures the volume exists on the broker (creates if missing).
+
+        Args:
+            name: Volume name.
+            size_gb: Quota in GB (used only on creation).
+
+        Returns:
+            A :class:`Volume` handle with ``upload()``, ``download()``,
+            ``ls()``, and ``delete()`` methods.
+        """
+        return Volume(self, name, size_gb)
 
     async def list_runners(self, *, print_table: bool = True) -> list[Runner]:
         """Fetch available compute runners from the broker fleet.

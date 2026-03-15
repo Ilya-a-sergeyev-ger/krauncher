@@ -42,11 +42,15 @@ from .exceptions import (
     TaskTimeout,
 )
 from .analyzer import TaskClassification
+from .data_source import DataSource
 from .KrauncherClient import KrauncherClient
 from .models import Runner, TaskHandle, TaskResult
+from .volume import Volume
 
 __all__ = [
     "KrauncherClient",
+    "DataSource",
+    "Volume",
     "TaskClassification",
     "Runner",
     "TaskHandle",
