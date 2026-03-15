@@ -11,10 +11,12 @@ Prerequisites:
     4. Start relay:   /opt/cas-relay/run.sh
     5. Install client: cd cas-client && pip install -e .
     6. Configure:     cas-client/.env (CAS_API_KEY, CAS_BROKER_URL, ...)
-    7. Run: python tutorial/10_progress_bar.py
+    7. Run: python tutorial/10_progress_bar.py [multiplier]
+       multiplier: 1x (default), 2x, 3x — scales matrix size and batch count
 """
 
 import asyncio
+import sys
 
 from krauncher import KrauncherClient
 
@@ -94,10 +96,21 @@ async def main():
         print("ERROR: Set CAS_API_KEY in .env (run seed_api_key.py first)")
         return
 
+    # Parse optional multiplier: 1x (default), 2x, 3x, ...
+    mul = 1
+    if len(sys.argv) > 1:
+        arg = sys.argv[1].lower().rstrip("x")
+        try:
+            mul = max(1, int(arg))
+        except ValueError:
+            print(f"Usage: python {sys.argv[0]} [multiplier, e.g. 2x]")
+            return
+
     epochs = 5
-    n_batches = 20
-    print(f"Submitting training task ({epochs} epochs × {n_batches} batches)...")
-    handle = await train_with_progress(epochs=epochs, n_batches=n_batches, size=128)
+    n_batches = 40 * mul
+    size = 512 * mul
+    print(f"Submitting training task ({epochs} epochs × {n_batches} batches, size={size}, {mul}x)...")
+    handle = await train_with_progress(epochs=epochs, n_batches=n_batches, size=size)
     print(f"Task ID: {handle.task_id}")
     c = handle.classification
     print(f"Classification: {c.tier}, VRAM={c.min_vram_gb}GB, method={c.analysis_method}, confidence={c.confidence}")
