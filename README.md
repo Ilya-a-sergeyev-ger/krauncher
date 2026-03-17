@@ -17,12 +17,10 @@ They also charge you for all of it — whether you use it or not.
 
 If you're fine-tuning a small model, running ablations, or iterating on
 a research experiment with a dataset under 2 GB, you're likely paying for
-an orchestration layer you don't need. The markup over raw GPU cost on
-those platforms typically runs 80–150%.
+an orchestration layer you don't need.
 
 Krauncher does less, on purpose. It runs your existing Python function on
-a remote GPU, returns the result, and gets out of the way. Our overhead
-is 20–30% over raw provider cost. That's the whole business model.
+a remote GPU, returns the result, and gets out of the way.
 
 ---
 
@@ -96,18 +94,6 @@ payload — it doesn't have the keys.
 
 This isn't a feature we added. It's a consequence of not wanting to be
 in the data custody business.
-
----
-
-## Pricing
-
-| Overhead over raw GPU cost     |           |
-|--------------------------------|-----------|
-| Big Orchestration Platforms    | 80–150%   |
-| Krauncher                      | 20–30%    |
-
-We broker compute from RunPod and Vast.ai. You can check their public
-rates. Our margin is the difference.
 
 ---
 

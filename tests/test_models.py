@@ -1,3 +1,5 @@
+# Copyright (c) 2024-2026 Ilya Sergeev. Licensed under the MIT License.
+
 """Tests for krauncher.models — TaskResult and TaskHandle."""
 
 import asyncio
@@ -47,7 +49,7 @@ class TestTaskResult:
         assert r.execution_time_sec == 12.5
         assert r.duration_sec == 15.0
         assert r.gpu_util_avg == 85.0
-        assert r.cost_usd == pytest.approx(15.0 * 1.20 / 3600.0)
+        assert r.charged_ku == 0.0  # no charged_ku in response
 
     def test_from_response_failed(self):
         data = {
@@ -73,7 +75,7 @@ class TestTaskResult:
         data = {"task_id": "abc-789", "status": "completed", "result": None}
         r = TaskResult.from_response(data)
         assert r.output is None
-        assert r.cost_usd == 0.0
+        assert r.charged_ku == 0.0
 
 
 # -- TaskHandle ----------------------------------------------------------------
