@@ -88,6 +88,7 @@ class TaskResult:
     duration_sec: float = 0.0
     gpu_util_avg: float = 0.0
     cost_usd: float = 0.0           # provider cost in USD (what we paid the GPU provider)
+    provider_cost: float = 0.0     # provider cost in user's billing currency
     actual_cu: float = 0.0          # actual compute units (from real execution time + GPU)
     charged_ku: float = 0.0         # KU charged to user's balance
     client_cost: float = 0.0        # net charge in billing_currency (after markup, before VAT)
@@ -123,6 +124,7 @@ class TaskResult:
             duration_sec=duration,
             gpu_util_avg=billing.get("gpu_util_avg", 0.0),
             cost_usd=data.get("cost_usd") or 0.0,
+            provider_cost=data.get("provider_cost_local") or data.get("cost_usd") or 0.0,
             actual_cu=data.get("actual_cu") or 0.0,
             charged_ku=data.get("charged_ku") or 0.0,
             client_cost=data.get("client_cost_local") or 0.0,

@@ -46,8 +46,10 @@ async def main():
     print(f"GPU:    {result.actual_gpu}")
     print(f"Time:   {result.execution_time_sec:.2f}s")
     print()
+    cur = result.billing_currency
     print("── Billing ──────────────────────────────────")
     print(f"  Actual CU:      {result.actual_cu:.4f}")
+    print(f"  Provider cost:  {result.provider_cost:.6f} {cur}")
     print(f"  Charged KU:     {result.charged_ku:.4f}")
     print("─────────────────────────────────────────────")
 

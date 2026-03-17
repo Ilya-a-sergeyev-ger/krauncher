@@ -165,12 +165,15 @@ def main():
         if not isinstance(outcome, BaseException)
     ]
     if successful:
+        cur = successful[0].billing_currency or "USD"
         total_cu = round(sum(r.actual_cu for r in successful), 4)
+        total_provider = round(sum(r.provider_cost for r in successful), 6)
         total_ku = round(sum(r.charged_ku for r in successful), 4)
 
         print("\n── Billing ──────────────────────────────────")
         print(f"  Tasks completed:  {len(successful)}")
         print(f"  Total actual CU:  {total_cu:.4f}")
+        print(f"  Provider cost:    {total_provider:.6f} {cur}")
         print(f"  Total charged KU: {total_ku:.4f}")
         print("─────────────────────────────────────────────")
 
