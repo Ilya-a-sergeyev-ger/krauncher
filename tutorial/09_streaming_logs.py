@@ -1,3 +1,5 @@
+# Copyright (c) 2024-2026 Ilya Sergeev. Licensed under the MIT License.
+
 """Tutorial 09: Real-time log streaming via cas-relay.
 
 Submits a training-loop task that prints per-epoch progress to stdout.
@@ -94,7 +96,8 @@ async def main():
     print(f"Worker:        {result.worker_id}")
     print(f"GPU:           {result.actual_gpu}")
     print(f"Time:          {result.execution_time_sec:.2f}s")
-    print(f"Cost:          ${result.cost_usd:.6f}")
+    print(f"Actual CU:     {result.actual_cu:.4f}")
+    print(f"Charged KU:    {result.charged_ku:.4f}")
 
 
 if __name__ == "__main__":

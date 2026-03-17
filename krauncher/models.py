@@ -1,3 +1,5 @@
+# Copyright (c) 2024-2026 Ilya Sergeev. Licensed under the MIT License.
+
 """TaskHandle, TaskResult and Runner models."""
 
 from __future__ import annotations
@@ -86,6 +88,8 @@ class TaskResult:
     duration_sec: float = 0.0
     gpu_util_avg: float = 0.0
     cost_usd: float = 0.0           # provider cost in USD (what we paid the GPU provider)
+    actual_cu: float = 0.0          # actual compute units (from real execution time + GPU)
+    charged_ku: float = 0.0         # KU charged to user's balance
     client_cost: float = 0.0        # net charge in billing_currency (after markup, before VAT)
     vat_amount: float = 0.0         # VAT in billing_currency
     total_cost: float = 0.0         # client_cost + vat_amount in billing_currency
@@ -119,6 +123,8 @@ class TaskResult:
             duration_sec=duration,
             gpu_util_avg=billing.get("gpu_util_avg", 0.0),
             cost_usd=data.get("cost_usd") or 0.0,
+            actual_cu=data.get("actual_cu") or 0.0,
+            charged_ku=data.get("charged_ku") or 0.0,
             client_cost=data.get("client_cost_local") or 0.0,
             vat_amount=data.get("vat_amount_local") or 0.0,
             total_cost=data.get("total_cost_local") or 0.0,

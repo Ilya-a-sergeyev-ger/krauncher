@@ -1,3 +1,5 @@
+# Copyright (c) 2024-2026 Ilya Sergeev. Licensed under the MIT License.
+
 """Tutorial 15: Data Sources — named data with input/output workflow.
 
 Demonstrates the named data sources feature: instead of passing raw URLs
@@ -149,7 +151,8 @@ async def main():
     print(f"  Download:   {result.download_sec:.2f}s")
     print(f"  Execution:  {exec_sec:.2f}s")
     print(f"  Total:      {result.execution_time_sec:.2f}s")
-    print(f"  Cost:       ${result.cost_usd:.6f}")
+    print(f"  Actual CU:  {result.actual_cu:.4f}")
+    print(f"  Charged KU: {result.charged_ku:.4f}")
 
     print("\nOutput files were synced to the output data source.")
     print("Check your S3 bucket or the Web UI to see sector_summary.json and sector_counts.csv.")

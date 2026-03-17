@@ -1,3 +1,5 @@
+# Copyright (c) 2024-2026 Ilya Sergeev. Licensed under the MIT License.
+
 """Tutorial 08 — Parallel task groups with threaded submission.
 
 Same as tutorial 07 but each group submits AND waits for its tasks
@@ -163,24 +165,13 @@ def main():
         if not isinstance(outcome, BaseException)
     ]
     if successful:
-        cur            = successful[0].billing_currency or "USD"
-        vat_rate       = successful[0].vat_rate_pct
-        total_provider = sum(r.cost_usd for r in successful)
-        total_client   = round(sum(r.client_cost for r in successful), 6)
-        total_charge   = round(sum(r.total_cost  for r in successful), 6)
-        # Derive total VAT from actual charged amounts — individual per-task
-        # vat_amount fields may round to 0 for micro-transactions.
-        total_vat      = round(total_charge - total_client, 6)
+        total_cu = round(sum(r.actual_cu for r in successful), 4)
+        total_ku = round(sum(r.charged_ku for r in successful), 4)
 
         print("\n── Billing ──────────────────────────────────")
         print(f"  Tasks completed:  {len(successful)}")
-        print(f"  Provider cost:    ${total_provider:.6f} USD")
-        print(f"  Net charge:       {total_client:.6f} {cur}")
-        if vat_rate and total_vat > 0:
-            print(f"  VAT ({vat_rate:.1f}%):       {total_vat:.6f} {cur}")
-        elif vat_rate:
-            print(f"  VAT ({vat_rate:.1f}%):       0 (below per-task rounding threshold)")
-        print(f"  Total charged:    {total_charge:.6f} {cur}")
+        print(f"  Total actual CU:  {total_cu:.4f}")
+        print(f"  Total charged KU: {total_ku:.4f}")
         print("─────────────────────────────────────────────")
 
 

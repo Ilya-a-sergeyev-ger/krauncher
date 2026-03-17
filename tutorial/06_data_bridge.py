@@ -1,3 +1,5 @@
+# Copyright (c) 2024-2026 Ilya Sergeev. Licensed under the MIT License.
+
 """Tutorial 06: Data Bridge — loading external data into the sandbox.
 
 Demonstrates data_urls parameter: the worker downloads files from HTTP/S3
@@ -108,7 +110,8 @@ async def main():
     print(f"  Download:     {result.download_sec:.2f}s")
     print(f"  Execution:    {exec_sec:.2f}s")
     print(f"  Total:        {result.execution_time_sec:.2f}s")
-    print(f"Cost: ${result.cost_usd:.6f}")
+    print(f"  Actual CU:    {result.actual_cu:.4f}")
+    print(f"  Charged KU:   {result.charged_ku:.4f}")
 
     # Verify data was actually loaded
     assert output["total_rows"] > 1000, f"Expected >1000 rows, got {output['total_rows']}"

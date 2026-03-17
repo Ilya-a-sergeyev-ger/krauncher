@@ -1,3 +1,5 @@
+# Copyright (c) 2024-2026 Ilya Sergeev. Licensed under the MIT License.
+
 """Tutorial 10: Real-time progress bar via relay streaming.
 
 Demonstrates \r-based in-place progress bars streamed through cas-relay.
@@ -126,15 +128,8 @@ async def main():
     print(f"Time:          {result.execution_time_sec:.2f}s")
     print()
     print("── Billing ──────────────────────────────────")
-    print(f"  Provider cost:  ${result.cost_usd:.6f} USD")
-    cur = result.billing_currency
-    if result.client_cost:
-        print(f"  Net charge:     {result.client_cost:.6f} {cur}")
-        if result.vat_rate_pct:
-            print(f"  VAT ({result.vat_rate_pct:.1f}%):     {result.vat_amount:.6f} {cur}")
-        print(f"  Total:          {result.total_cost:.6f} {cur}")
-    else:
-        print(f"  (billing info not yet available)")
+    print(f"  Actual CU:      {result.actual_cu:.4f}")
+    print(f"  Charged KU:     {result.charged_ku:.4f}")
     print("─────────────────────────────────────────────")
 
 
