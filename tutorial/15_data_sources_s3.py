@@ -71,6 +71,15 @@ def process_tickers():
     data_files = os.listdir("/data")
     print(f"Files in /data: {data_files}")
 
+    # ── Step 1b: Create a 4 GB scratch file in /data ──
+    # This makes the cached input dir large enough to demonstrate
+    # disk eviction when space runs low (see DiskManager).
+    import subprocess
+    scratch = "/data/scratch_4gb.bin"
+    if not os.path.exists(scratch):
+        subprocess.run(["fallocate", "-l", "4G", scratch], check=True)
+    print(f"Scratch file: {os.path.getsize(scratch) / (1024**3):.1f} GB")
+
     # ── Step 2: Read input CSV ──
     csv_path = "/data/tickers.csv"
     rows = []

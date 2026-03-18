@@ -182,6 +182,7 @@ class KrauncherClient:
         volume: str | None = None,
         group_id: str | None = None,
         provider: str | None = None,
+        disk_gb: int = 20,
     ) -> Callable:
         """Decorator that marks a function as a remote GPU task.
 
@@ -207,6 +208,9 @@ class KrauncherClient:
             provider: Pin task to a specific provider (e.g. ``"runpod"`` or
                 ``"local"``).  ``None`` lets the dispatcher pick the cheapest
                 suitable host across all providers.
+            disk_gb: Required disk space in GB (default 20).  The broker takes
+                the maximum of this value and the auto-resolved size from
+                data sources.
         """
 
         client = self
@@ -252,6 +256,7 @@ class KrauncherClient:
                 requirements: dict[str, Any] = {
                     "min_vram_gb": classification.min_vram_gb,
                     "gpu_arch": gpu_arch,
+                    "disk_gb": disk_gb,
                 }
                 if provider is not None:
                     requirements["provider_name"] = provider
