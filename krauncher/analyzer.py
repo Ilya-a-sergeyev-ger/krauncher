@@ -1,3 +1,5 @@
+# Copyright (c) 2024-2026 Ilya Sergeev. Licensed under the MIT License.
+
 """Client-side task classification via cas-analyzer.
 
 Three classification levels:

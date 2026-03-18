@@ -1,3 +1,5 @@
+# Copyright (c) 2024-2026 Ilya Sergeev. Licensed under the MIT License.
+
 """Tutorial 02: Remote task with pip dependencies.
 
 Demonstrates installing packages at runtime inside the sandbox.

@@ -1,3 +1,5 @@
+# Copyright (c) 2024-2026 Ilya Sergeev. Licensed under the MIT License.
+
 """Fixture module for testing multi-function serialization.
 
 Functions here simulate a user's module with helpers + task entry point.

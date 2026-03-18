@@ -1,3 +1,5 @@
+# Copyright (c) 2024-2026 Ilya Sergeev. Licensed under the MIT License.
+
 """Tutorial 05 — Task Groups (host affinity).
 
 Two tasks with the same group_id are guaranteed to run on the same worker.

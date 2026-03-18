@@ -1,3 +1,5 @@
+# Copyright (c) 2024-2026 Ilya Sergeev. Licensed under the MIT License.
+
 """Tutorial 04: Execution timeout — resource protection.
 
 When a function hangs on the worker (e.g. ``while True: pass``), the

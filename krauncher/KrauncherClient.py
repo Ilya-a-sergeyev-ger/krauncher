@@ -1,3 +1,5 @@
+# Copyright (c) 2024-2026 Ilya Sergeev. Licensed under the MIT License.
+
 """KrauncherClient — main entry point for submitting GPU tasks."""
 
 from __future__ import annotations

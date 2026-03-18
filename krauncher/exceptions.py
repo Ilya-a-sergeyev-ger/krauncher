@@ -1,3 +1,5 @@
+# Copyright (c) 2024-2026 Ilya Sergeev. Licensed under the MIT License.
+
 """Exceptions for krauncher client library."""
 
 from __future__ import annotations

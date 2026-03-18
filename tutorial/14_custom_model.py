@@ -1,3 +1,5 @@
+# Copyright (c) 2024-2026 Ilya Sergeev. Licensed under the MIT License.
+
 """Tutorial 14: Custom PyTorch model — tests analyzer LLM path.
 
 Uses a hand-written model (not in HF registry) so AST confidence stays low

@@ -1,3 +1,5 @@
+# Copyright (c) 2024-2026 Ilya Sergeev. Licensed under the MIT License.
+
 """Volume — manage persistent S3-backed volumes on the broker."""
 
 from __future__ import annotations

@@ -1,3 +1,5 @@
+# Copyright (c) 2024-2026 Ilya Sergeev. Licensed under the MIT License.
+
 """Tutorial 13: BERT fine-tuning — tests analyzer classification on real ML code.
 
 Submits a BERT fine-tuning task to verify that cas-analyzer correctly detects:

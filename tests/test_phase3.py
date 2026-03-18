@@ -1,3 +1,5 @@
+# Copyright (c) 2024-2026 Ilya Sergeev. Licensed under the MIT License.
+
 """Tests for Phase 3: Runner model, @client.task(provider=...), list_runners().
 
 Covers:

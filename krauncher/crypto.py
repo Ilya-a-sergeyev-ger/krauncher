@@ -1,3 +1,5 @@
+# Copyright (c) 2024-2026 Ilya Sergeev. Licensed under the MIT License.
+
 """E2E encryption utilities for krauncher (cas-client).
 
 Mirrors cas-worker/src/relay/crypto.py — same algorithm, same wire format.

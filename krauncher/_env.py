@@ -1,3 +1,5 @@
+# Copyright (c) 2024-2026 Ilya Sergeev. Licensed under the MIT License.
+
 """Minimal .env loader for krauncher.
 
 Reads key=value pairs from .env file in the current working directory.

@@ -1,3 +1,5 @@
+# Copyright (c) 2024-2026 Ilya Sergeev. Licensed under the MIT License.
+
 """Serialize Python functions to code_string for the CaS worker."""
 
 from __future__ import annotations

@@ -1,3 +1,5 @@
+# Copyright (c) 2024-2026 Ilya Sergeev. Licensed under the MIT License.
+
 """DataSource — manage registered data sources on the broker."""
 
 from __future__ import annotations

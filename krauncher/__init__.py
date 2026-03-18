@@ -1,3 +1,5 @@
+# Copyright (c) 2024-2026 Ilya Sergeev. Licensed under the MIT License.
+
 """krauncher — CaS client library for submitting GPU compute tasks.
 
 Usage::

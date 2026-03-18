@@ -1,3 +1,5 @@
+# Copyright (c) 2024-2026 Ilya Sergeev. Licensed under the MIT License.
+
 """Tutorial 12: Helper functions — automatic multi-function serialization.
 
 Demonstrates that krauncher automatically detects and includes helper

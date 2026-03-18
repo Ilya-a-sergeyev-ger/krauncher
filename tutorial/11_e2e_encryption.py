@@ -1,3 +1,5 @@
+# Copyright (c) 2024-2026 Ilya Sergeev. Licensed under the MIT License.
+
 """Tutorial 11: End-to-End Encryption.
 
 Demonstrates that task code and arguments never reach the broker or RabbitMQ

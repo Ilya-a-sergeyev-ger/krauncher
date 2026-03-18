@@ -1,3 +1,5 @@
+# Copyright (c) 2024-2026 Ilya Sergeev. Licensed under the MIT License.
+
 """Tutorial 03: Error handling — remote traceback forwarding.
 
 When a function raises an exception on the worker, the full traceback

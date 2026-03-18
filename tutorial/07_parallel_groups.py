@@ -1,3 +1,5 @@
+# Copyright (c) 2024-2026 Ilya Sergeev. Licensed under the MIT License.
+
 """Tutorial 07 — Parallel task groups (fan-out / fan-in).
 
 Demonstrates submitting many tasks across several groups in parallel.
