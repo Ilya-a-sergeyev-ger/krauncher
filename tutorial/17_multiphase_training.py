@@ -391,10 +391,13 @@ async def main():
     print(f"  Epochs:    {r1.output['epochs']}")
     print(f"  Loss:      {r1.output['final_loss']}")
     print(f"  Accuracy:  {r1.output['final_accuracy']}")
-    print(f"  Worker:    {r1.worker_id}")
-    print(f"  GPU:       {r1.actual_gpu}")
+    print(f"  Worker:    {r1.worker_id}  GPU: {r1.actual_gpu}")
     print(f"  Download:  {r1.download_sec:.2f}s")
-    print(f"  Total:     {r1.execution_time_sec:.2f}s")
+    print(f"  Time:      {r1.execution_time_sec:.2f}s")
+    cur = r1.billing_currency
+    print(f"  Actual CU:      {r1.actual_cu:.4f}")
+    print(f"  Provider cost:  {r1.provider_cost:.6f} {cur}")
+    print(f"  Charged KU:     {r1.charged_ku:.4f}")
     print()
 
     # ── Phase 2 ──
@@ -413,10 +416,13 @@ async def main():
     print(f"  Total epochs:       {r2.output['total_epochs']}")
     print(f"  Loss:               {r2.output['final_loss']}")
     print(f"  Accuracy:           {r2.output['final_accuracy']}")
-    print(f"  Worker:             {r2.worker_id}")
-    print(f"  GPU:                {r2.actual_gpu}")
+    print(f"  Worker:             {r2.worker_id}  GPU: {r2.actual_gpu}")
     print(f"  Download:           {r2.download_sec:.2f}s")
-    print(f"  Total:              {r2.execution_time_sec:.2f}s")
+    print(f"  Time:               {r2.execution_time_sec:.2f}s")
+    cur = r2.billing_currency
+    print(f"  Actual CU:          {r2.actual_cu:.4f}")
+    print(f"  Provider cost:      {r2.provider_cost:.6f} {cur}")
+    print(f"  Charged KU:         {r2.charged_ku:.4f}")
     print()
 
     # ── Summary ──
