@@ -173,8 +173,10 @@ class KrauncherClient:
         data: str | None,
         volume: str | None,
     ) -> float | None:
-        """Query broker for total dataset size (MB) across data sources and volumes.
+        """Query broker for input dataset size (MB) for CU estimation.
 
+        Only includes input data sources and volumes — output sources are
+        excluded because they don't affect training iteration count.
         Returns None if no data/volume specified or on any error (best-effort).
         """
         names = [n for n in (data, volume) if n is not None]
