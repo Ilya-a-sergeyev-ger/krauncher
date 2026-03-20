@@ -168,6 +168,33 @@ class KrauncherClient:
         )
         return self._analyzer_client
 
+    async def _resolve_dataset_mb(
+        self,
+        data: str | None,
+        volume: str | None,
+    ) -> float | None:
+        """Query broker for total dataset size (MB) across data sources and volumes.
+
+        Returns None if no data/volume specified or on any error (best-effort).
+        """
+        names = [n for n in (data, volume) if n is not None]
+        if not names:
+            return None
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as session:
+                resp = await session.post(
+                    f"{self.broker_url}/data-sources/sizes",
+                    json={"names": names},
+                    headers={"X-API-Key": self.api_key},
+                )
+                if resp.status_code != 200:
+                    return None
+                sizes = resp.json().get("sizes", {})
+                total = sum(v for v in sizes.values() if v is not None)
+                return total if total > 0 else None
+        except Exception:
+            return None
+
     def task(
         self,
         *,
@@ -232,7 +259,11 @@ class KrauncherClient:
                 else:
                     # _analyzer raises KrauncherError if no analyzer configured
                     try:
-                        classification = await client._analyzer.classify(code_string, kwargs=kwargs)
+                        # Query broker for data source sizes to improve CU estimation
+                        dataset_mb = await client._resolve_dataset_mb(data, volume)
+                        classification = await client._analyzer.classify(
+                            code_string, dataset_mb=dataset_mb, kwargs=kwargs,
+                        )
                     except KrauncherError:
                         raise
                     except Exception as exc:
