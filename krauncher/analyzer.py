@@ -32,7 +32,6 @@ class TaskClassification:
     tier: str                        # "no_gpu" | "light" | "heavy"
     confidence: float                # 0.0–1.0
     analysis_method: str             # "explicit" | "ast" | "ast+llm" | "safety_net"
-    performance_table: list[dict] = field(default_factory=list)
     compute_units: float | None = None
     duration_confidence: float | None = None
 
@@ -210,7 +209,6 @@ class AnalyzerClient:
         """Parse cas-analyzer result into TaskClassification."""
         hw = result.get("min_hardware", {})
         dur = result.get("duration_estimate")
-        perf = result.get("performance_table", [])
 
         min_vram_gb = hw.get("min_vram_gb", 24)
         method = hw.get("analysis_method", "ast")
@@ -227,7 +225,6 @@ class AnalyzerClient:
             tier=_vram_to_tier(min_vram_gb),
             confidence=confidence,
             analysis_method=method,
-            performance_table=perf,
             compute_units=cu,
             duration_confidence=dur_conf,
         )
