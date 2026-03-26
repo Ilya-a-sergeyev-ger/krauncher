@@ -115,7 +115,7 @@ async def main():
     handle = await train_with_progress(epochs=epochs, n_batches=n_batches, size=size)
     print(f"Task ID: {handle.task_id}")
     c = handle.classification
-    print(f"Classification: {c.tier}, VRAM={c.min_vram_gb}GB, method={c.analysis_method}, confidence={c.confidence}")
+    print(f"Classification: {c.tier}, VRAM={c.min_vram_gb}GB, workload={c.workload_type}, method={c.analysis_method}, confidence={c.confidence}")
     print("─" * 55)
 
     result = await handle.wait(on_log=on_log)

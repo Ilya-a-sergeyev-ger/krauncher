@@ -53,7 +53,7 @@ def _run_group(gi: int, group_id: str, n_tasks: int) -> list[tuple[int, int, str
             print(f"  submitted G{gi}/T{ti:02d}  id={handle.task_id}")
             if ti == 0:
                 c = handle.classification
-                print(f"  G{gi} classification: {c.tier}, VRAM={c.min_vram_gb}GB, method={c.analysis_method}")
+                print(f"  G{gi} classification: {c.tier}, VRAM={c.min_vram_gb}GB, workload={c.workload_type}, method={c.analysis_method}")
 
         results = []
         settled = await asyncio.gather(*[h for _, h in handles], return_exceptions=True)

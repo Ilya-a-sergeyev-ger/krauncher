@@ -381,7 +381,7 @@ async def main():
     h1 = await train_phase1(epochs=3, batch_size=128, lr=0.01)
     print(f"Task ID: {h1.task_id}")
     c = h1.classification
-    print(f"Classification: {c.tier}, VRAM={c.min_vram_gb}GB, method={c.analysis_method}")
+    print(f"Classification: {c.tier}, VRAM={c.min_vram_gb}GB, workload={c.workload_type}, method={c.analysis_method}")
     print("-" * 60)
 
     r1 = await h1.wait(on_log=on_log, timeout=TASK_TIMEOUT)

@@ -34,6 +34,7 @@ class TaskClassification:
     analysis_method: str             # "explicit" | "ast" | "ast+llm" | "safety_net"
     compute_units: float | None = None
     duration_confidence: float | None = None
+    workload_type: str | None = None       # "llm_inference" | "ai_training" | "3d_render"
 
     def to_dict(self) -> dict:
         d: dict = {
@@ -46,6 +47,8 @@ class TaskClassification:
             d["compute_units"] = self.compute_units
         if self.duration_confidence is not None:
             d["duration_confidence"] = self.duration_confidence
+        if self.workload_type is not None:
+            d["workload_type"] = self.workload_type
         return d
 
 
@@ -227,4 +230,5 @@ class AnalyzerClient:
             analysis_method=method,
             compute_units=cu,
             duration_confidence=dur_conf,
+            workload_type=hw.get("workload_type"),
         )
