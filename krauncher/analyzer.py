@@ -34,7 +34,9 @@ class TaskClassification:
     analysis_method: str             # "explicit" | "ast" | "ast+llm" | "safety_net"
     compute_units: float | None = None
     duration_confidence: float | None = None
-    workload_type: str | None = None       # "llm_inference" | "ai_training" | "3d_render"
+    workload_type: str | None = None       # "llm_inference" | "ai_training" | "cv_training" | ...
+    model_size_category: str | None = None    # "small" | "medium" | "large"
+    working_set_category: str | None = None   # "small" | "medium" | "large"
 
     def to_dict(self) -> dict:
         d: dict = {
@@ -49,6 +51,10 @@ class TaskClassification:
             d["duration_confidence"] = self.duration_confidence
         if self.workload_type is not None:
             d["workload_type"] = self.workload_type
+        if self.model_size_category is not None:
+            d["model_size_category"] = self.model_size_category
+        if self.working_set_category is not None:
+            d["working_set_category"] = self.working_set_category
         return d
 
 
@@ -231,4 +237,6 @@ class AnalyzerClient:
             compute_units=cu,
             duration_confidence=dur_conf,
             workload_type=hw.get("workload_type"),
+            model_size_category=hw.get("model_size_category"),
+            working_set_category=hw.get("working_set_category"),
         )
