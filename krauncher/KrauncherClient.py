@@ -201,7 +201,7 @@ class KrauncherClient:
         self,
         *,
         vram_gb: int | None = None,
-        gpu_arch: str = "Ampere+",
+        gpu_arch: str = "",
         pip: list[str] | None = None,
         timeout: int = 600,
         priority: int = 1,
@@ -221,7 +221,7 @@ class KrauncherClient:
         Args:
             vram_gb: Minimum GPU VRAM in GB.  ``None`` = auto-classify via
                 cas-analyzer (or safety net if unavailable).
-            gpu_arch: Required GPU architecture (e.g. ``"Ampere+"``).
+            gpu_arch: Required GPU architecture (e.g. ``"Ada"``).  Empty string = no filter.
             pip: Pip packages to install in the sandbox before execution.
             timeout: Execution timeout in seconds.
             priority: Task priority (0 = highest, 10 = lowest).

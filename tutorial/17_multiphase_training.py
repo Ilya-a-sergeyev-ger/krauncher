@@ -73,7 +73,8 @@ TASK_TIMEOUT = 6000  # seconds — both worker execution and client wait
 # ---------------------------------------------------------------------------
 
 @client.task(
-    vram_gb=1,
+    vram_gb=2,
+#    gpu_arch="Ada",
     timeout=TASK_TIMEOUT,
     group_id=GROUP,
     pip=[],  # torch, torchvision are pre-installed in cas-sandbox
@@ -197,7 +198,8 @@ def train_phase1(epochs: int, batch_size: int, lr: float, max_batches: int = 0):
 # ---------------------------------------------------------------------------
 
 @client.task(
-    vram_gb=1,
+    vram_gb=2,
+#    gpu_arch="Ada",
     timeout=TASK_TIMEOUT,
     group_id=GROUP,
     pip=[],  # torch, torchvision are pre-installed in cas-sandbox
