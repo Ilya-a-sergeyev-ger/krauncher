@@ -117,7 +117,7 @@ def train_phase1(epochs: int, batch_size: int, lr: float, max_batches: int = 0):
     train_ds = ImageFolder(os.path.join(data_root, "train"), transform=transform)
     train_loader = DataLoader(
         train_ds, batch_size=batch_size, shuffle=True,
-        num_workers=2, pin_memory=device.type == "cuda",
+        num_workers=16, pin_memory=device.type == "cuda",
     )
     n_batches = len(train_loader) if max_batches <= 0 else min(max_batches, len(train_loader))
     print(f"Training samples: {len(train_ds)}, batches/epoch: {n_batches}")
@@ -259,7 +259,7 @@ def train_phase2(epochs: int, batch_size: int, lr: float, max_batches: int = 0):
     train_ds = ImageFolder(os.path.join(data_root, "train"), transform=transform)
     train_loader = DataLoader(
         train_ds, batch_size=batch_size, shuffle=True,
-        num_workers=2, pin_memory=device.type == "cuda",
+        num_workers=16, pin_memory=device.type == "cuda",
     )
 
     # ── Model + checkpoint ──
@@ -380,7 +380,7 @@ async def main():
     print("=" * 60)
     print("PHASE 1: Initial training (3 epochs)")
     print("=" * 60)
-    h1 = await train_phase1(epochs=3, batch_size=128, lr=0.01)
+    h1 = await train_phase1(epochs=3, batch_size=2048, lr=0.01)
     print(f"Task ID: {h1.task_id}")
     c = h1.classification
     print(f"Classification: {c.tier}, VRAM={c.min_vram_gb}GB, workload={c.workload_type}, method={c.analysis_method}")
@@ -406,7 +406,7 @@ async def main():
     print("=" * 60)
     print("PHASE 2: Continue training (3 more epochs)")
     print("=" * 60)
-    h2 = await train_phase2(epochs=3, batch_size=128, lr=0.005)
+    h2 = await train_phase2(epochs=3, batch_size=2048, lr=0.005)
     print(f"Task ID: {h2.task_id}")
     print("-" * 60)
 
