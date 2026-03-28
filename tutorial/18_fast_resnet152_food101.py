@@ -27,11 +27,11 @@ from krauncher import KrauncherClient
 client = KrauncherClient()
 
 INPUT_SOURCE = "food-101"
-TASK_TIMEOUT = 900
+TASK_TIMEOUT = 1200
 
 
 @client.task(
-    vram_gb=12,
+    vram_gb=25,
     timeout=TASK_TIMEOUT,
     pip=[],
     data=INPUT_SOURCE,
