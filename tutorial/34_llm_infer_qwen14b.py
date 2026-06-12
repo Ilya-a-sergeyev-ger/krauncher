@@ -1,9 +1,10 @@
 """Tutorial 34: Qwen2.5-14B-Instruct inference — short generation.
 
-Calibration target bucket (llm_inference, large msc, large dps, medium cps,
+Calibration target bucket (llm_inference, large msc, medium dps, small cps,
 one epoch, tiny samples). Replaces the Mixtral-8x7B slot from the plan with
-an open, single-GPU-friendly 14B model. Pushes `data_per_step` to `large`
-via the 28 GB fp16 weight footprint.
+an open, single-GPU-friendly 14B model. The 28 GB fp16 weight footprint lands
+`data_per_step` in `medium` (the `large` threshold is 40 GB — see calibration
+task 37, Qwen2.5-32B, for the large-dps bucket).
 
 Expected runtime: ~3-5 min on RTX 4090 (24 GB just fits), 40 samples × 200 tokens.
 Needs ≥24 GB VRAM; if unavailable, fall back to QLoRA-style 4-bit loading.
