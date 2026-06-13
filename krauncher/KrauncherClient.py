@@ -363,6 +363,8 @@ class KrauncherClient:
                         f"CU={cu_str}",
                         f"method={c.analysis_method}",
                     ]
+                    if c.cpu_only:
+                        parts.append("cpu_only=True")
                     if c.workload_type:
                         parts.append(f"workload={c.workload_type}")
                     if c.model_size_category:
@@ -393,8 +395,8 @@ class KrauncherClient:
                     c = classification
                     _logger.info(
                         "estimate_only=true — skipping broker submission "
-                        "(CU=%s, VRAM=%sGB, tier=%s, method=%s)",
-                        c.compute_units, c.min_vram_gb, c.tier, c.analysis_method,
+                        "(CU=%s, VRAM=%sGB, tier=%s, method=%s, cpu_only=%s)",
+                        c.compute_units, c.min_vram_gb, c.tier, c.analysis_method, c.cpu_only,
                     )
                     _sys.exit(0)
 

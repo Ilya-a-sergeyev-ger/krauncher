@@ -32,6 +32,7 @@ class TaskClassification:
     tier: str                        # "no_gpu" | "light" | "heavy"
     confidence: float                # 0.0–1.0
     analysis_method: str             # "explicit" | "ast" | "ast+llm" | "safety_net"
+    cpu_only: bool = False           # task makes no use of the GPU (analyzer flag)
     compute_units: float | None = None
     cu_compute: float | None = None           # compute phase CU (GPU + DataLoader pipeline)
     cu_io: float | None = None                # IO phase CU (model/dataset download + pip)
@@ -59,6 +60,7 @@ class TaskClassification:
             "tier": self.tier,
             "confidence": self.confidence,
             "analysis_method": self.analysis_method,
+            "cpu_only": self.cpu_only,
         }
         if self.compute_units is not None:
             d["compute_units"] = self.compute_units
@@ -296,6 +298,7 @@ class AnalyzerClient:
             tier=_vram_to_tier(min_vram_gb),
             confidence=confidence,
             analysis_method=method,
+            cpu_only=bool(hw.get("cpu_only", False)),
             compute_units=cu,
             cu_compute=cu_compute,
             cu_io=cu_io,
