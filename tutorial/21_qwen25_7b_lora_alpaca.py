@@ -22,7 +22,7 @@ HF_MODEL = "hf://models/Qwen/Qwen2.5-7B"
 
 @client.task(
     vram_gb=24,
-    timeout=4200,
+    timeout=14400,
     data_urls=[HF_DATASET, HF_MODEL],
     pip=["peft", "datasets"],
     dataset_size=22,  # alpaca ~22 MB
@@ -216,7 +216,7 @@ async def main():
             )) or "%" in line:
                 print(f"  {line.rstrip()}")
 
-    result = await handle.wait(on_log=on_log, timeout=4200)
+    result = await handle.wait(on_log=on_log, timeout=14700)
 
     output = result.output
     print(f"\nResults:")

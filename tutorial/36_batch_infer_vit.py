@@ -18,7 +18,7 @@ HF_MODEL = "hf://models/google/vit-base-patch16-224"
 
 @client.task(
     vram_gb=6,
-    timeout=300,
+    timeout=900,
     data_urls=[HF_MODEL],
     dataset_size=1,
     disk_gb=10,
@@ -82,7 +82,7 @@ async def main():
     handle = await vit_batch_inference()
     print(f"Task submitted: {handle.task_id}")
 
-    result = await handle.wait(timeout=600)
+    result = await handle.wait(timeout=1200)
     out = result.output
     print(f"\nBatch: {out['batch_size']}, infer: {out['infer_sec']}s")
     exec_sec = result.execution_time_sec - result.download_sec - result.pip_install_sec

@@ -19,7 +19,7 @@ HF_MODEL = "hf://models/microsoft/Phi-3-mini-4k-instruct"
 
 @client.task(
     vram_gb=12,
-    timeout=900,
+    timeout=9600,
     data_urls=[HF_DATASET, HF_MODEL],
     pip=["datasets"],
     dataset_size=3,
@@ -92,7 +92,7 @@ async def main():
     handle = await phi3_inference()
     print(f"Task submitted: {handle.task_id}")
 
-    result = await handle.wait(timeout=1200)
+    result = await handle.wait(timeout=9900)
     out = result.output
     print(f"\nSamples: {out['samples']}, total tokens: {out['total_tokens']}")
     exec_sec = result.execution_time_sec - result.download_sec - result.pip_install_sec

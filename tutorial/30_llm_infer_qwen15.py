@@ -19,7 +19,7 @@ HF_MODEL = "hf://models/Qwen/Qwen2.5-1.5B-Instruct"
 
 @client.task(
     vram_gb=8,
-    timeout=600,
+    timeout=1800,
     data_urls=[HF_DATASET, HF_MODEL],
     pip=["datasets"],
     dataset_size=3,  # gsm8k ~3 MB
@@ -93,7 +93,7 @@ async def main():
     handle = await qwen15_inference()
     print(f"Task submitted: {handle.task_id}")
 
-    result = await handle.wait(timeout=900)
+    result = await handle.wait(timeout=2100)
     out = result.output
     print(f"\nSamples: {out['samples']}, total tokens: {out['total_tokens']}")
     exec_sec = result.execution_time_sec - result.download_sec - result.pip_install_sec

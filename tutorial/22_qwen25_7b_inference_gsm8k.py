@@ -22,7 +22,7 @@ HF_MODEL = "hf://models/Qwen/Qwen2.5-7B-Instruct"
 
 @client.task(
     vram_gb=20,
-    timeout=4800,
+    timeout=36000,
     data_urls=[HF_DATASET, HF_MODEL],
     pip=["datasets"],
     dataset_size=3,  # gsm8k ~3 MB
@@ -165,7 +165,7 @@ async def main():
             )):
                 print(f"  {line.rstrip()}")
 
-    result = await handle.wait(on_log=on_log, timeout=2400)
+    result = await handle.wait(on_log=on_log, timeout=36300)
 
     output = result.output
     print(f"\nResults:")
