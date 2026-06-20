@@ -144,6 +144,44 @@ reason about optimizing the user code.
 
 ---
 
+## Pre-run cost estimate (HTTP) — for optimization loops
+
+Get the predicted **per-GPU time and cost** for a task *before submitting it*,
+priced against the live cross-provider market. This is the signal an LLM/agent
+optimizes against. It is an HTTP endpoint (no client method yet); `estimate_only`
+returns only the classification, `get_task_report` returns prices only *after* a
+run — this returns the priced list up front.
+
+```
+POST https://krauncher.com/api/estimate
+  X-API-Key: cas_...          # optional; anonymous is IP-limited
+  {"code": "<source containing a @client.task function>"}
+```
+
+Response (rows sorted cheapest-first by `estimated_cost_usd`):
+
+```jsonc
+{
+  "rows": [
+    { "gpu_name": "RTX 5060 Ti", "vram_gb": 16,
+      "estimated_sec": 356.18, "estimated_cost_usd": 0.009747,
+      "min_price_usd": 0.0985, "prices": { "vastai": 0.0985 } }
+  ],
+  "cu_breakdown": { "cu_compute": 0.0, "cu_io": 0.0, "cu_setup": 0.0 }, // where the cost lives
+  "min_vram_gb": 6, "confidence": 0.0, "analysis_method": "ast"        // "ast" | "llm"
+}
+```
+
+- `rows[0]` is the cheapest GPU that fits. Empty `rows` ⇒ CPU-only or the model
+  wasn't recognized (no GPU compute to price).
+- `cu_breakdown` shows whether the job is compute-, I/O-, or setup-bound — what to
+  optimize.
+- A prediction is an **expected** cost, not a guarantee (real-host variance).
+- **The loop:** edit the task → estimate → keep what's cheaper → repeat. Costs no
+  GPU-seconds; ideal as an agent tool.
+
+---
+
 ## Exceptions (`from krauncher import ...`)
 
 All inherit `KrauncherError`.
