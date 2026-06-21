@@ -365,6 +365,10 @@ class KrauncherClient:
                     ]
                     if c.cpu_only:
                         parts.append("cpu_only=True")
+                    if c.input_tokens is not None:
+                        parts.append(f"input_tokens={c.input_tokens}")
+                    if c.seq_len is not None:
+                        parts.append(f"seq_len={c.seq_len}")
                     if c.workload_type:
                         parts.append(f"workload={c.workload_type}")
                     if c.model_size_category:

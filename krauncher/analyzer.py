@@ -37,6 +37,8 @@ class TaskClassification:
     cu_compute: float | None = None           # compute phase CU (GPU + DataLoader pipeline)
     cu_io: float | None = None                # IO phase CU (model/dataset download + pip)
     cu_setup: float | None = None             # setup phase CU (torch import + CUDA init)
+    seq_len: int | None = None                # decode/generation sequence length
+    input_tokens: int | None = None           # prompt length P (llm_inference prefill)
     predicted_sec: float | None = None        # reference-time forecast (t_setup + t_io_ref + t_compute_ref)
     model_download_mb: float | None = None    # estimated model download size (MB)
     dataset_mb: float | None = None           # dataset size (MB)
@@ -70,6 +72,10 @@ class TaskClassification:
             d["cu_io"] = self.cu_io
         if self.cu_setup is not None:
             d["cu_setup"] = self.cu_setup
+        if self.seq_len is not None:
+            d["seq_len"] = self.seq_len
+        if self.input_tokens is not None:
+            d["input_tokens"] = self.input_tokens
         if self.predicted_sec is not None:
             d["predicted_sec"] = self.predicted_sec
         if self.model_download_mb is not None:
@@ -280,6 +286,8 @@ class AnalyzerClient:
         cu_findings: list[str] = []
         epochs_bkt = None
         samples_bkt = None
+        seq_len_val = None
+        input_tokens_val = None
         if dur:
             cu = dur.get("compute_units")
             cu_compute = dur.get("cu_compute")
@@ -292,6 +300,8 @@ class AnalyzerClient:
             cu_findings = dur.get("findings") or []
             epochs_bkt = dur.get("epochs_bucket")
             samples_bkt = dur.get("samples_bucket")
+            seq_len_val = dur.get("seq_len")
+            input_tokens_val = dur.get("input_tokens")
 
         return TaskClassification(
             min_vram_gb=min_vram_gb,
@@ -303,6 +313,8 @@ class AnalyzerClient:
             cu_compute=cu_compute,
             cu_io=cu_io,
             cu_setup=cu_setup,
+            seq_len=seq_len_val,
+            input_tokens=input_tokens_val,
             predicted_sec=predicted_sec,
             model_download_mb=model_download_mb,
             dataset_mb=dataset_mb_val,
