@@ -390,6 +390,10 @@ class KrauncherClient:
                             f"pcie={rp.get('pcie_bandwidth_util', 0):.2f},"
                             f"net={rp.get('network_io_sensitivity', 0):.2f}]"
                         )
+                    # Generic pass-through: any unmapped analyzer debug field
+                    # (cu_prefill/cu_decode and future) prints itself — no per-field code.
+                    for _k, _v in c.extra_debug.items():
+                        parts.append(f"{_k}={_v}")
                     if c.analyzer_time is not None:
                         parts.append(f"time={c.analyzer_time:.2f}s")
                     _logger.debug("Classification: %s", ", ".join(parts))
