@@ -55,6 +55,11 @@ class TaskClassification:
     samples_bucket: str | None = None         # "tiny" | "small" | "medium" | "large"
     cu_findings: list[str] = field(default_factory=list)  # training loop breakdown from analyzer
     analyzer_time: float | None = None              # analyzer round-trip time in seconds
+    # Universal pass-through: any analyzer duration_estimate field not mapped to a
+    # typed attribute above (e.g. cu_prefill/cu_decode and future phase metadata)
+    # is carried here and forwarded as-is to the broker payload — so new analyzer
+    # debug fields need no client change.
+    extra_debug: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         d: dict = {
@@ -104,6 +109,10 @@ class TaskClassification:
             d["epochs_bucket"] = self.epochs_bucket
         if self.samples_bucket is not None:
             d["samples_bucket"] = self.samples_bucket
+        # Universal pass-through of unmapped analyzer fields (debug/phase metadata).
+        for k, v in self.extra_debug.items():
+            if v is not None and k not in d:
+                d[k] = v
         return d
 
 
@@ -303,6 +312,16 @@ class AnalyzerClient:
             seq_len_val = dur.get("seq_len")
             input_tokens_val = dur.get("input_tokens")
 
+        # Universal pass-through: forward any duration_estimate field not already
+        # mapped to a typed attribute (cu_prefill/cu_decode and future metadata).
+        _mapped = {
+            "compute_units", "cu_compute", "cu_io", "cu_setup", "predicted_sec",
+            "model_download_mb", "dataset_mb", "confidence", "findings",
+            "epochs_bucket", "samples_bucket", "seq_len", "input_tokens",
+            "basis", "detected_iterations",
+        }
+        extra_debug = {k: v for k, v in (dur or {}).items() if k not in _mapped and v is not None}
+
         return TaskClassification(
             min_vram_gb=min_vram_gb,
             tier=_vram_to_tier(min_vram_gb),
@@ -330,4 +349,5 @@ class AnalyzerClient:
             epochs_bucket=epochs_bkt,
             samples_bucket=samples_bkt,
             cu_findings=cu_findings,
+            extra_debug=extra_debug,
         )
