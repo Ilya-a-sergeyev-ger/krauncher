@@ -192,15 +192,19 @@ class KrauncherClient:
         Raises KrauncherError if no analyzer is available.
         """
         url = self._get_analyzer_url()  # raises on missing
-        token = self._get_broker_config().get("analyzer_token")
+        config = self._get_broker_config()
+        token = config.get("analyzer_token")
+        store_code = bool(config.get("store_code", False))
         # Re-create client if URL changed
         if self._analyzer_client is not None and self._analyzer_client._url == url.rstrip("/"):
+            self._analyzer_client._store_code = store_code
             return self._analyzer_client
         self._analyzer_client = AnalyzerClient(
             analyzer_url=url,
             encrypt=self._encrypt_analyzer,
             timeout=self._analyzer_timeout,
             token=token,
+            store_code=store_code,
         )
         return self._analyzer_client
 

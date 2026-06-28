@@ -55,6 +55,7 @@ class TaskClassification:
     samples_bucket: str | None = None         # "tiny" | "small" | "medium" | "large"
     cu_findings: list[str] = field(default_factory=list)  # training loop breakdown from analyzer
     analyzer_time: float | None = None              # analyzer round-trip time in seconds
+    analyzer_job_id: str | None = None              # analyzer's job id (correlation key for results)
     # Universal pass-through: any analyzer duration_estimate field not mapped to a
     # typed attribute above (e.g. cu_prefill/cu_decode and future phase metadata)
     # is carried here and forwarded as-is to the broker payload — so new analyzer
@@ -109,6 +110,8 @@ class TaskClassification:
             d["epochs_bucket"] = self.epochs_bucket
         if self.samples_bucket is not None:
             d["samples_bucket"] = self.samples_bucket
+        if self.analyzer_job_id is not None:
+            d["analyzer_job_id"] = self.analyzer_job_id
         # Universal pass-through of unmapped analyzer fields (debug/phase metadata).
         for k, v in self.extra_debug.items():
             if v is not None and k not in d:
@@ -172,11 +175,13 @@ class AnalyzerClient:
         timeout: float = 10.0,
         poll_interval: float = 0.5,
         token: str | None = None,
+        store_code: bool = False,
     ) -> None:
         self._url = analyzer_url.rstrip("/")
         self._encrypt = encrypt
         self._timeout = timeout
         self._poll_interval = poll_interval
+        self._store_code = store_code
         self._analyzer_pubkey: bytes | None = None
         self._headers: dict[str, str] = (
             {"X-Analyzer-Token": token} if token else {}
@@ -221,7 +226,7 @@ class AnalyzerClient:
 
         async with httpx.AsyncClient(timeout=self._timeout, headers=self._headers) as session:
             # Build request body
-            body: dict = {}
+            body: dict = {"store_code": self._store_code, "source": "api"}
             if dataset_mb is not None:
                 body["dataset_mb"] = dataset_mb
             if kwargs:
@@ -265,6 +270,7 @@ class AnalyzerClient:
                     elapsed = _time.monotonic() - t0
                     result = self._parse_result(data["result"])
                     result.analyzer_time = elapsed
+                    result.analyzer_job_id = job_id
                     if result.cu_findings:
                         for finding in result.cu_findings:
                             _logger.debug("  CU: %s", finding)
