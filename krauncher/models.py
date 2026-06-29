@@ -19,7 +19,7 @@ from .exceptions import AuthError, E2EIdentityMismatch, InsufficientBalanceError
 if TYPE_CHECKING:
     from .KrauncherClient import KrauncherClient
 
-TERMINAL_STATUSES = frozenset({"completed", "failed", "timeout", "hardware_preempted", "no_capacity"})
+TERMINAL_STATUSES = frozenset({"completed", "failed", "timeout", "hardware_preempted", "no_capacity", "aborted_insufficient_balance", "cancelled"})
 
 _STATUS_SYMBOL = {
     "available": "✓",
@@ -291,8 +291,16 @@ def _relay_stream_sync(
     expected_worker_pub: str | None = None,
     use_tls: bool = False,
     ca_pem: str | None = None,
+    channel_holder: dict | None = None,
 ) -> None:
-    """Blocking gRPC relay stream — meant to run in a worker thread."""
+    """Blocking gRPC relay stream — meant to run in a worker thread.
+
+    *channel_holder* (if given) receives the live gRPC channel under key
+    ``"channel"`` so the async wrapper can close it on cancellation — this
+    unblocks the iterator when the host dies abnormally and the relay never
+    sends ``stream_ended`` (otherwise the executor thread blocks forever and
+    hangs process exit).
+    """
     try:
         import grpc
         from . import relay_pb2, relay_pb2_grpc
@@ -311,6 +319,8 @@ def _relay_stream_sync(
 
     try:
         with _make_relay_channel(target, use_tls, ca_pem) as channel:
+            if channel_holder is not None:
+                channel_holder["channel"] = channel
             stub = relay_pb2_grpc.RelayStub(channel)
             logger.debug("[relay] TaskStream open task_id=%s", task_id[:8])
 
@@ -466,21 +476,36 @@ async def _relay_stream(
     target = target.rstrip("/")
 
     loop = asyncio.get_event_loop()
-    await loop.run_in_executor(
-        _relay_executor,
-        lambda: _relay_stream_sync(
-            task_id,
-            target,
-            token,
-            on_log,
-            ek_priv=ek_priv,
-            plaintext_code=plaintext_code,
-            plaintext_args=plaintext_args,
-            expected_worker_pub=expected_worker_pub,
-            use_tls=use_tls,
-            ca_pem=ca_pem,
-        ),
-    )
+    channel_holder: dict = {}
+    try:
+        await loop.run_in_executor(
+            _relay_executor,
+            lambda: _relay_stream_sync(
+                task_id,
+                target,
+                token,
+                on_log,
+                ek_priv=ek_priv,
+                plaintext_code=plaintext_code,
+                plaintext_args=plaintext_args,
+                expected_worker_pub=expected_worker_pub,
+                use_tls=use_tls,
+                ca_pem=ca_pem,
+                channel_holder=channel_holder,
+            ),
+        )
+    except asyncio.CancelledError:
+        # Cancelled on terminal status / timeout. The executor thread may be
+        # blocked on a stream that the relay never closes (abnormal host death);
+        # close the channel so the iterator raises and the thread exits, else
+        # the non-daemon executor thread hangs process exit.
+        ch = channel_holder.get("channel")
+        if ch is not None:
+            try:
+                ch.close()
+            except Exception:
+                pass
+        raise
 
 
 class TaskHandle:
@@ -508,6 +533,10 @@ class TaskHandle:
         self._client = client
         self._result: TaskResult | None = None
         self._last_status: str = ""
+        # Relay coords (url/token/ca) for cancel-on-abandon of an executing task
+        # — calling relay CancelTask kills the worker container so it emits a
+        # TaskResult and the broker settles + releases the hold. Set on poll.
+        self._relay_cancel_info: dict | None = None
         self._phase_waiting_logged: bool = False
         self._phase_host_logged: bool = False
         self._phase_provisioning_logged: bool = False
@@ -540,7 +569,82 @@ class TaskHandle:
         """Allow ``result = await task``."""
         return self.wait().__await__()
 
+    def _cancel_remote(self) -> None:
+        """Best-effort synchronous DELETE /tasks/{id} so the broker releases the
+        prepaid hold when the caller abandons the task before it reaches a
+        terminal status (Ctrl-C, timeout, exception).
+
+        Synchronous on purpose: it must complete even while the event loop is
+        being torn down by Ctrl-C, where an awaited call could be re-cancelled.
+        """
+        # 1. Tell the broker. Queued/pre-dispatch → settle fee + release hold.
+        #    Executing → records cancel intent (final settle via the worker's
+        #    TaskResult triggered by step 2).
+        try:
+            import httpx as _httpx
+            with _httpx.Client(timeout=10.0) as s:
+                s.delete(
+                    f"{self._client.broker_url}/tasks/{self.task_id}",
+                    headers={"X-API-Key": self._client.api_key},
+                )
+            logger.debug("cancel-on-abandon sent: %s", self.task_id)
+        except Exception as e:
+            logger.debug("cancel-on-abandon failed for %s: %s", self.task_id, e)
+
+        # 2. If the task is executing, actively stop the worker via relay
+        #    CancelTask (kills the container → worker emits TaskResult → broker
+        #    settles + releases the hold). The broker can't do this (CancelTask
+        #    is client-authed); the client holds the per-task relay token.
+        info = self._relay_cancel_info
+        if info:
+            self._cancel_via_relay(info)
+
+    def _cancel_via_relay(self, info: dict) -> None:
+        """Best-effort synchronous relay CancelTask to stop an executing worker."""
+        try:
+            import grpc  # noqa: F401
+            from . import relay_pb2, relay_pb2_grpc
+        except ImportError:
+            return
+        try:
+            url = info["url"]
+            token = info["token"]
+            use_tls = _detect_relay_tls(url)
+            target = url
+            for prefix in _TLS_SCHEMES + _PLAINTEXT_SCHEMES:
+                if target.startswith(prefix):
+                    target = target[len(prefix):]
+                    break
+            target = target.rstrip("/")
+            with _make_relay_channel(target, use_tls, info.get("ca")) as channel:
+                stub = relay_pb2_grpc.RelayStub(channel)
+                stub.CancelTask(
+                    relay_pb2.CancelTaskRequest(task_id=self.task_id),
+                    metadata=[("authorization", f"bearer {token}")],
+                    timeout=10.0,
+                )
+            logger.debug("relay cancel sent: %s", self.task_id)
+        except Exception as e:
+            logger.debug("relay cancel failed for %s: %s", self.task_id, e)
+
     async def wait(
+        self,
+        *,
+        timeout: float = 600.0,
+        on_log: Callable[[dict[str, Any]], None] | None = None,
+    ) -> TaskResult:
+        """Wait for terminal status; on abandonment before terminal (Ctrl-C,
+        timeout, exception) cancel the task remotely so its hold is released."""
+        try:
+            return await self._wait_impl(timeout=timeout, on_log=on_log)
+        except (asyncio.CancelledError, KeyboardInterrupt, Exception):
+            # Exited without a terminal result → the caller abandoned the task.
+            # Tell the broker so the prepaid hold is freed instead of leaking.
+            if self._result is None:
+                self._cancel_remote()
+            raise
+
+    async def _wait_impl(
         self,
         *,
         timeout: float = 600.0,
@@ -646,6 +750,15 @@ class TaskHandle:
         async with httpx.AsyncClient(timeout=30.0) as session:
             while True:
                 data = await self._poll(session)
+
+                # Stash relay coords so cancel-on-abandon can actively stop an
+                # executing worker via relay CancelTask (not just flag it).
+                _rurl = data.get("relay_url")
+                _rtok = data.get("relay_task_token")
+                if _rurl and _rtok:
+                    self._relay_cancel_info = {
+                        "url": _rurl, "token": _rtok, "ca": data.get("relay_ca"),
+                    }
 
                 # Log status transitions for user visibility (3 phases).
                 current_status = data.get("status", "")
@@ -777,7 +890,15 @@ class TaskHandle:
                         try:
                             await asyncio.wait_for(asyncio.shield(relay_task), timeout=5.0)
                         except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
+                            # Drain timed out (abnormal host death — relay never
+                            # closes the stream). Cancel and await so the channel
+                            # is closed and the executor thread exits before we
+                            # return; otherwise the non-daemon thread hangs exit.
                             relay_task.cancel()
+                            try:
+                                await relay_task
+                            except (asyncio.CancelledError, Exception):
+                                pass
 
                     # Race: status flips to terminal in Redis before CH writer
                     # flushes v2 with execution_result. For completed tasks we
@@ -859,6 +980,19 @@ class TaskHandle:
                 f"Task {result.task_id} failed",
                 task_id=result.task_id,
                 remote_traceback=result.traceback or result.stderr or None,
+            )
+
+        if result.status == "aborted_insufficient_balance":
+            raise TaskError(
+                f"Task {result.task_id} aborted: insufficient balance for the "
+                f"next billing chunk (top up and re-submit)",
+                task_id=result.task_id,
+            )
+
+        if result.status == "cancelled":
+            raise TaskError(
+                f"Task {result.task_id} was cancelled",
+                task_id=result.task_id,
             )
 
         raise TaskError(
