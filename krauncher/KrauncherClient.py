@@ -36,7 +36,13 @@ class _EstimateStub:
     submission run through unchanged in CAS_ESTIMATE_ONLY dry runs.
     """
 
-    def __getattr__(self, _name: str) -> "_EstimateStub":
+    # Happy-path values for status-like attributes, so script guards
+    # (`if r.status != "completed": abort`) take the success branch.
+    _HAPPY: dict = {"status": "completed", "exit_code": 0, "success": True}
+
+    def __getattr__(self, _name: str) -> Any:
+        if _name in _EstimateStub._HAPPY:
+            return _EstimateStub._HAPPY[_name]
         return self
 
     def __getitem__(self, _key: Any) -> "_EstimateStub":
@@ -88,7 +94,9 @@ class _EstimateOnlyHandle:
     async def result(self, *args: Any, **kwargs: Any) -> _EstimateStub:
         return _EstimateStub()
 
-    def __getattr__(self, _name: str) -> _EstimateStub:
+    def __getattr__(self, _name: str) -> Any:
+        if _name in _EstimateStub._HAPPY:
+            return _EstimateStub._HAPPY[_name]
         return _EstimateStub()
 
 # Sentinel to distinguish "not passed" from explicit None
