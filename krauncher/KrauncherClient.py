@@ -27,6 +27,70 @@ from .models import Runner, TaskHandle, _check_response
 from .serializer import serialize_function
 from .volume import Volume
 
+
+class _EstimateStub:
+    """Permissive placeholder returned by estimate-only handles.
+
+    Any attribute/item access, call or arithmetic yields another stub; formats
+    as 0 for numeric specs. Lets result-printing script code after a skipped
+    submission run through unchanged in CAS_ESTIMATE_ONLY dry runs.
+    """
+
+    def __getattr__(self, _name: str) -> "_EstimateStub":
+        return self
+
+    def __getitem__(self, _key: Any) -> "_EstimateStub":
+        return self
+
+    def __call__(self, *args: Any, **kwargs: Any) -> "_EstimateStub":
+        return self
+
+    def __format__(self, spec: str) -> str:
+        try:
+            return format(0.0, spec)
+        except (ValueError, TypeError):
+            return "estimate-only"
+
+    def __str__(self) -> str:
+        return "estimate-only"
+
+    __repr__ = __str__
+
+    def __float__(self) -> float:
+        return 0.0
+
+    def __int__(self) -> int:
+        return 0
+
+    def _self(self, *args: Any, **kwargs: Any) -> "_EstimateStub":
+        return self
+
+    __add__ = __radd__ = __sub__ = __rsub__ = __mul__ = __rmul__ = _self
+    __truediv__ = __rtruediv__ = __floordiv__ = __rfloordiv__ = _self
+
+    def _false(self, _other: Any) -> bool:
+        return False
+
+    __lt__ = __gt__ = __le__ = __ge__ = _false
+
+
+class _EstimateOnlyHandle:
+    """Stand-in for TaskHandle when estimate_only skips broker submission."""
+
+    task_id = "estimate-only"
+
+    def __init__(self, classification: TaskClassification | None = None):
+        self.classification = classification
+
+    async def wait(self, *args: Any, **kwargs: Any) -> _EstimateStub:
+        return _EstimateStub()
+
+    async def result(self, *args: Any, **kwargs: Any) -> _EstimateStub:
+        return _EstimateStub()
+
+    def __getattr__(self, _name: str) -> _EstimateStub:
+        return _EstimateStub()
+
 # Sentinel to distinguish "not passed" from explicit None
 _UNSET: Any = object()
 
@@ -403,14 +467,16 @@ class KrauncherClient:
                     _logger.debug("Classification: %s", ", ".join(parts))
 
                 if client.estimate_only:
-                    import sys as _sys
                     c = classification
                     _logger.info(
                         "estimate_only=true — skipping broker submission "
                         "(CU=%s, VRAM=%sGB, tier=%s, method=%s, cpu_only=%s)",
                         c.compute_units, c.min_vram_gb, c.tier, c.analysis_method, c.cpu_only,
                     )
-                    _sys.exit(0)
+                    # Do NOT exit: return a stub handle so the script continues
+                    # and every decorated function gets its own analyze request
+                    # (multi-task scripts, e.g. 17 phase1/phase2).
+                    return _EstimateOnlyHandle(classification)
 
                 # Priority: decorator param → client default (from env or constructor)
                 final_gpu_arch = gpu_arch if gpu_arch is not None else client.default_gpu_arch
