@@ -122,6 +122,7 @@ class KrauncherClient:
     analyzer_timeout CAS_ANALYZER_TIMEOUT   10.0
     gpu_name         KRAUNCHER_GPU_NAME     ""
     gpu_arch         KRAUNCHER_GPU_ARCH     ""
+    (task vram_gb)   KRAUNCHER_VRAM_GB      "" (overrides @task(vram_gb=...))
     estimate_only    CAS_ESTIMATE_ONLY      false
     ================ ====================== ==========================================
 
@@ -330,6 +331,10 @@ class KrauncherClient:
     ) -> Callable:
         """Decorator that marks a function as a remote GPU task.
 
+        KRAUNCHER_VRAM_GB (env) overrides the declared ``vram_gb`` — lets a
+        measurement campaign re-target the same calibration samples to a
+        different VRAM class without editing the sample files.
+
         The decorated function becomes async — calling it submits the task
         to the broker and returns a :class:`TaskHandle`.
 
@@ -365,6 +370,11 @@ class KrauncherClient:
         """
 
         client = self
+
+        # Env override for the declared VRAM class (see class docstring).
+        _vram_env = os.environ.get("KRAUNCHER_VRAM_GB", "")
+        if _vram_env:
+            vram_gb = int(_vram_env)
 
         def decorator(func: Callable) -> Callable:
             # Serialize at decoration time — fail fast on invalid functions
