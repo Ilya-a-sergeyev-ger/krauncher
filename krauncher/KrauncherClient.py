@@ -94,6 +94,9 @@ class _EstimateOnlyHandle:
     async def result(self, *args: Any, **kwargs: Any) -> _EstimateStub:
         return _EstimateStub()
 
+    def __await__(self) -> Any:
+        return self.wait().__await__()
+
     def __getattr__(self, _name: str) -> Any:
         if _name in _EstimateStub._HAPPY:
             return _EstimateStub._HAPPY[_name]
