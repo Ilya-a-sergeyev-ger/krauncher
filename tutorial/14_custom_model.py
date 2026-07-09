@@ -94,7 +94,7 @@ async def main():
     c = handle.classification
     print(f"Classification: tier={c.tier}, vram={c.min_vram_gb}GB, CU={c.compute_units}, method={c.analysis_method}, confidence={c.confidence}")
 
-    result = await handle
+    result = await handle.wait()
     print(f"Result: {result.output}")
     print(f"Worker: {result.worker_id}  GPU: {result.actual_gpu}  Time: {result.execution_time_sec:.2f}s")
 
