@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0brelay.proto\x12\x08relay.v1\"H\n\rWorkerMessage\x12\x0f\n\x07task_id\x18\x01 \x01(\t\x12\x0c\n\x04type\x18\x02 \x01(\t\x12\n\n\x02ts\x18\x03 \x01(\x01\x12\x0c\n\x04\x64\x61ta\x18\x04 \x01(\x0c\"H\n\rWorkerCommand\x12\x0f\n\x07task_id\x18\x01 \x01(\t\x12\x0c\n\x04type\x18\x02 \x01(\t\x12\n\n\x02ts\x18\x03 \x01(\x01\x12\x0c\n\x04\x64\x61ta\x18\x04 \x01(\x0c\"$\n\x11TaskStreamRequest\x12\x0f\n\x07task_id\x18\x01 \x01(\t\"S\n\x0bTaskMessage\x12\x0f\n\x07task_id\x18\x01 \x01(\t\x12\x0c\n\x04type\x18\x02 \x01(\t\x12\n\n\x02ts\x18\x03 \x01(\x01\x12\x0b\n\x03seq\x18\x04 \x01(\x04\x12\x0c\n\x04\x64\x61ta\x18\x05 \x01(\x0c\"5\n\x14UploadPayloadRequest\x12\x0f\n\x07task_id\x18\x01 \x01(\t\x12\x0c\n\x04\x64\x61ta\x18\x02 \x01(\x0c\"\x17\n\x15UploadPayloadResponse\"$\n\x11\x43\x61ncelTaskRequest\x12\x0f\n\x07task_id\x18\x01 \x01(\t\"\x14\n\x12\x43\x61ncelTaskResponse2\xac\x02\n\x05Relay\x12\x44\n\x0cWorkerStream\x12\x17.relay.v1.WorkerMessage\x1a\x17.relay.v1.WorkerCommand(\x01\x30\x01\x12\x42\n\nTaskStream\x12\x1b.relay.v1.TaskStreamRequest\x1a\x15.relay.v1.TaskMessage0\x01\x12P\n\rUploadPayload\x12\x1e.relay.v1.UploadPayloadRequest\x1a\x1f.relay.v1.UploadPayloadResponse\x12G\n\nCancelTask\x12\x1b.relay.v1.CancelTaskRequest\x1a\x1c.relay.v1.CancelTaskResponseB\x1cZ\x1a\x63\x61s-relay/internal/relayv1b\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0brelay.proto\x12\x08relay.v1\"H\n\rWorkerMessage\x12\x0f\n\x07task_id\x18\x01 \x01(\t\x12\x0c\n\x04type\x18\x02 \x01(\t\x12\n\n\x02ts\x18\x03 \x01(\x01\x12\x0c\n\x04\x64\x61ta\x18\x04 \x01(\x0c\"H\n\rWorkerCommand\x12\x0f\n\x07task_id\x18\x01 \x01(\t\x12\x0c\n\x04type\x18\x02 \x01(\t\x12\n\n\x02ts\x18\x03 \x01(\x01\x12\x0c\n\x04\x64\x61ta\x18\x04 \x01(\x0c\"$\n\x11TaskStreamRequest\x12\x0f\n\x07task_id\x18\x01 \x01(\t\"S\n\x0bTaskMessage\x12\x0f\n\x07task_id\x18\x01 \x01(\t\x12\x0c\n\x04type\x18\x02 \x01(\t\x12\n\n\x02ts\x18\x03 \x01(\x01\x12\x0b\n\x03seq\x18\x04 \x01(\x04\x12\x0c\n\x04\x64\x61ta\x18\x05 \x01(\x0c\"5\n\x14UploadPayloadRequest\x12\x0f\n\x07task_id\x18\x01 \x01(\t\x12\x0c\n\x04\x64\x61ta\x18\x02 \x01(\x0c\"\x17\n\x15UploadPayloadResponse\"$\n\x11\x43\x61ncelTaskRequest\x12\x0f\n\x07task_id\x18\x01 \x01(\t\"\x14\n\x12\x43\x61ncelTaskResponse\"4\n\x13UploadResultRequest\x12\x0f\n\x07task_id\x18\x01 \x01(\t\x12\x0c\n\x04\x64\x61ta\x18\x02 \x01(\x0c\"\x16\n\x14UploadResultResponse\"%\n\x12\x46\x65tchResultRequest\x12\x0f\n\x07task_id\x18\x01 \x01(\t\"#\n\x13\x46\x65tchResultResponse\x12\x0c\n\x04\x64\x61ta\x18\x01 \x01(\x0c\x32\xc7\x03\n\x05Relay\x12\x44\n\x0cWorkerStream\x12\x17.relay.v1.WorkerMessage\x1a\x17.relay.v1.WorkerCommand(\x01\x30\x01\x12\x42\n\nTaskStream\x12\x1b.relay.v1.TaskStreamRequest\x1a\x15.relay.v1.TaskMessage0\x01\x12P\n\rUploadPayload\x12\x1e.relay.v1.UploadPayloadRequest\x1a\x1f.relay.v1.UploadPayloadResponse\x12G\n\nCancelTask\x12\x1b.relay.v1.CancelTaskRequest\x1a\x1c.relay.v1.CancelTaskResponse\x12M\n\x0cUploadResult\x12\x1d.relay.v1.UploadResultRequest\x1a\x1e.relay.v1.UploadResultResponse\x12J\n\x0b\x46\x65tchResult\x12\x1c.relay.v1.FetchResultRequest\x1a\x1d.relay.v1.FetchResultResponseB\x1cZ\x1a\x63\x61s-relay/internal/relayv1b\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -48,6 +48,14 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_CANCELTASKREQUEST']._serialized_end=412
   _globals['_CANCELTASKRESPONSE']._serialized_start=414
   _globals['_CANCELTASKRESPONSE']._serialized_end=434
-  _globals['_RELAY']._serialized_start=437
-  _globals['_RELAY']._serialized_end=737
+  _globals['_UPLOADRESULTREQUEST']._serialized_start=436
+  _globals['_UPLOADRESULTREQUEST']._serialized_end=488
+  _globals['_UPLOADRESULTRESPONSE']._serialized_start=490
+  _globals['_UPLOADRESULTRESPONSE']._serialized_end=512
+  _globals['_FETCHRESULTREQUEST']._serialized_start=514
+  _globals['_FETCHRESULTREQUEST']._serialized_end=551
+  _globals['_FETCHRESULTRESPONSE']._serialized_start=553
+  _globals['_FETCHRESULTRESPONSE']._serialized_end=588
+  _globals['_RELAY']._serialized_start=591
+  _globals['_RELAY']._serialized_end=1046
 # @@protoc_insertion_point(module_scope)

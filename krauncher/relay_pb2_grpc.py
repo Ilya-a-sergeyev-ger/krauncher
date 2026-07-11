@@ -5,7 +5,7 @@ import warnings
 
 from . import relay_pb2 as relay__pb2
 
-GRPC_GENERATED_VERSION = '1.80.0'
+GRPC_GENERATED_VERSION = '1.78.1'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -55,6 +55,16 @@ class RelayStub(object):
                 request_serializer=relay__pb2.CancelTaskRequest.SerializeToString,
                 response_deserializer=relay__pb2.CancelTaskResponse.FromString,
                 _registered_method=True)
+        self.UploadResult = channel.unary_unary(
+                '/relay.v1.Relay/UploadResult',
+                request_serializer=relay__pb2.UploadResultRequest.SerializeToString,
+                response_deserializer=relay__pb2.UploadResultResponse.FromString,
+                _registered_method=True)
+        self.FetchResult = channel.unary_unary(
+                '/relay.v1.Relay/FetchResult',
+                request_serializer=relay__pb2.FetchResultRequest.SerializeToString,
+                response_deserializer=relay__pb2.FetchResultResponse.FromString,
+                _registered_method=True)
 
 
 class RelayServicer(object):
@@ -94,6 +104,22 @@ class RelayServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def UploadResult(self, request, context):
+        """UploadResult stores the worker's encrypted task result in the relay's
+        disk mailbox until the client fetches it (worker HMAC auth).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def FetchResult(self, request, context):
+        """FetchResult retrieves and deletes the stored result for a task
+        (client bearer-token auth, scoped to the task_id).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_RelayServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -116,6 +142,16 @@ def add_RelayServicer_to_server(servicer, server):
                     servicer.CancelTask,
                     request_deserializer=relay__pb2.CancelTaskRequest.FromString,
                     response_serializer=relay__pb2.CancelTaskResponse.SerializeToString,
+            ),
+            'UploadResult': grpc.unary_unary_rpc_method_handler(
+                    servicer.UploadResult,
+                    request_deserializer=relay__pb2.UploadResultRequest.FromString,
+                    response_serializer=relay__pb2.UploadResultResponse.SerializeToString,
+            ),
+            'FetchResult': grpc.unary_unary_rpc_method_handler(
+                    servicer.FetchResult,
+                    request_deserializer=relay__pb2.FetchResultRequest.FromString,
+                    response_serializer=relay__pb2.FetchResultResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -227,6 +263,60 @@ class Relay(object):
             '/relay.v1.Relay/CancelTask',
             relay__pb2.CancelTaskRequest.SerializeToString,
             relay__pb2.CancelTaskResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def UploadResult(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/relay.v1.Relay/UploadResult',
+            relay__pb2.UploadResultRequest.SerializeToString,
+            relay__pb2.UploadResultResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def FetchResult(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/relay.v1.Relay/FetchResult',
+            relay__pb2.FetchResultRequest.SerializeToString,
+            relay__pb2.FetchResultResponse.FromString,
             options,
             channel_credentials,
             insecure,

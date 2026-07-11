@@ -46,6 +46,7 @@ from .exceptions import (
     SerializationError,
     TaskError,
     TaskTimeout,
+    ValueTransferError,
 )
 from .analyzer import TaskClassification
 from .data_source import DataSource
@@ -70,6 +71,7 @@ __all__ = [
     "PayloadDeliveryError",
     "RemoteTimeout",
     "SerializationError",
+    "ValueTransferError",
 ]
 
 __version__ = "0.1.0"
