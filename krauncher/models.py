@@ -262,6 +262,13 @@ def _make_relay_channel(target: str, use_tls: bool, ca_pem: str | None = None):
     """
     import os
     import grpc
+    # 24 MB both ways — the 16 MB plaintext inline budget after base64 + JSON
+    # framing (payload out, FetchResult response in); python-grpc default
+    # receive limit is 4 MB.
+    options: list = [
+        ("grpc.max_receive_message_length", 24 * 1024 * 1024),
+        ("grpc.max_send_message_length", 24 * 1024 * 1024),
+    ]
     if use_tls:
         ca_bytes = ca_pem.encode() if ca_pem else None
         if ca_bytes is None:
@@ -273,10 +280,11 @@ def _make_relay_channel(target: str, use_tls: bool, ca_pem: str | None = None):
         # logical name carried in the cert SAN instead of the target host, so one
         # private CA can cover any number of relays without DNS.
         authority = (os.environ.get("KRAUNCHER_RELAY_AUTHORITY") or "cas-relay").strip()
-        options = [("grpc.ssl_target_name_override", authority)] if authority else None
+        if authority:
+            options.append(("grpc.ssl_target_name_override", authority))
         creds = grpc.ssl_channel_credentials(root_certificates=ca_bytes)
         return grpc.secure_channel(target, creds, options=options)
-    return grpc.insecure_channel(target)
+    return grpc.insecure_channel(target, options=options)
 
 
 def _relay_stream_sync(
@@ -292,6 +300,7 @@ def _relay_stream_sync(
     use_tls: bool = False,
     ca_pem: str | None = None,
     channel_holder: dict | None = None,
+    key_holder: dict | None = None,
 ) -> None:
     """Blocking gRPC relay stream — meant to run in a worker thread.
 
@@ -383,6 +392,9 @@ def _relay_stream_sync(
 
                         wk_pub_bytes = base64.urlsafe_b64decode(wk_pub_b64 + "==")
                         shared_key = derive_shared_secret(ek_priv, wk_pub_bytes)
+                        if key_holder is not None:
+                            # Retained for FetchResult decryption after the task ends.
+                            key_holder["key"] = shared_key
                         logger.debug("[relay] shared key derived task_id=%s", task_id[:8])
 
                         payload_plain = json.dumps({
@@ -447,6 +459,55 @@ def _relay_stream_sync(
         logger.debug("[relay] error task_id=%s: %s: %s", task_id[:8], type(exc).__name__, exc)
 
 
+def _fetch_relay_result_sync(
+    task_id: str,
+    target: str,
+    token: str,
+    use_tls: bool,
+    ca_pem: str | None,
+    shared_key: bytes,
+) -> dict[str, Any] | None:
+    """Fetch and decrypt the task's result envelope from the relay mailbox.
+
+    Returns the ``{"output": ...}`` envelope, or None when the mailbox has
+    nothing stored (NotFound) or the fetch/decrypt failed. Blocking — run in
+    the relay thread pool.
+    """
+    try:
+        import grpc
+        from . import relay_pb2, relay_pb2_grpc
+        from .crypto import decrypt
+    except ImportError as exc:
+        logger.debug("[relay] result fetch import error: %s", exc)
+        return None
+
+    try:
+        with _make_relay_channel(target, use_tls, ca_pem) as channel:
+            stub = relay_pb2_grpc.RelayStub(channel)
+            resp = stub.FetchResult(
+                relay_pb2.FetchResultRequest(task_id=task_id),
+                metadata=[("authorization", f"bearer {token}")],
+                timeout=30.0,
+            )
+    except grpc.RpcError as exc:
+        if exc.code() == grpc.StatusCode.NOT_FOUND:
+            logger.debug("[relay] no stored result task_id=%s", task_id[:8])
+        else:
+            logger.warning("[relay] result fetch failed task_id=%s: %s", task_id[:8], exc)
+        return None
+    except Exception as exc:
+        logger.warning("[relay] result fetch failed task_id=%s: %s", task_id[:8], exc)
+        return None
+
+    try:
+        envelope = json.loads(resp.data)
+        plaintext = decrypt(shared_key, envelope["enc"])
+        return json.loads(plaintext)
+    except Exception as exc:
+        logger.warning("[relay] result decrypt failed task_id=%s: %s", task_id[:8], exc)
+        return None
+
+
 async def _relay_stream(
     task_id: str,
     relay_url: str,
@@ -458,6 +519,7 @@ async def _relay_stream(
     plaintext_args: dict[str, Any] | None = None,
     expected_worker_pub: str | None = None,
     ca_pem: str | None = None,
+    key_holder: dict | None = None,
 ) -> None:
     """Async wrapper: runs synchronous gRPC relay in a thread pool executor.
 
@@ -492,6 +554,7 @@ async def _relay_stream(
                 use_tls=use_tls,
                 ca_pem=ca_pem,
                 channel_holder=channel_holder,
+                key_holder=key_holder,
             ),
         )
     except asyncio.CancelledError:
@@ -551,6 +614,9 @@ class TaskHandle:
         self._ek_priv = ek_priv
         self._plaintext_code = plaintext_code
         self._plaintext_args = plaintext_args
+        # Shared task key captured by the relay stream thread; reused to
+        # decrypt the FetchResult envelope after the task ends.
+        self._e2e_key_holder: dict = {}
         #: Task classification result (TaskClassification or None)
         self.classification = classification
         # Re-submit callback: returns a new task_id when invoked. Used by wait()
@@ -845,6 +911,7 @@ class TaskHandle:
                                 plaintext_args=self._plaintext_args,
                                 expected_worker_pub=data.get("worker_pub_b64"),
                                 ca_pem=data.get("relay_ca"),
+                                key_holder=self._e2e_key_holder,
                             ),
                             name=f"relay-{self.task_id[:8]}",
                         )
@@ -925,6 +992,11 @@ class TaskHandle:
                             task_id=self.task_id, status=data["status"],
                         )
 
+                    # E2E: the output travels via the relay result mailbox,
+                    # not the broker (which stores output=None for E2E tasks).
+                    if self._ek_priv is not None and data["status"] == "completed":
+                        await self._merge_relay_result(data)
+
                     _log_billing_summary(self._result)
                     return self._check_result(self._result)
 
@@ -937,6 +1009,63 @@ class TaskHandle:
                 await asyncio.sleep(min(delay, remaining))
                 delay = min(delay * 1.5, 5.0)
 
+
+    async def _merge_relay_result(self, data: dict[str, Any]) -> None:
+        """Fetch the encrypted output from the relay mailbox into the result.
+
+        Legacy compatibility: when the mailbox has nothing but the broker
+        record carries an output (worker not yet upgraded), the broker value
+        stays. A completed E2E task with neither raises TaskError — by design
+        there is no broker-side fallback for E2E results.
+        """
+        cancel_info = self._relay_cancel_info or {}
+        relay_url = data.get("relay_url") or cancel_info.get("url")
+        token = data.get("relay_task_token") or cancel_info.get("token")
+        ca_pem = data.get("relay_ca") or cancel_info.get("ca")
+
+        # Shared key: captured during the stream's key exchange, or re-derived
+        # from the broker-reported worker pubkey (covers stream races).
+        key = self._e2e_key_holder.get("key")
+        if key is None and data.get("worker_pub_b64"):
+            try:
+                import base64
+                from .crypto import derive_shared_secret
+                key = derive_shared_secret(
+                    self._ek_priv,
+                    base64.urlsafe_b64decode(data["worker_pub_b64"] + "=="),
+                )
+            except Exception as exc:
+                logger.debug("shared key derivation failed: %s", exc)
+
+        envelope: dict[str, Any] | None = None
+        if relay_url and token and key is not None:
+            use_tls = _detect_relay_tls(relay_url)
+            target = relay_url
+            for prefix in _TLS_SCHEMES + _PLAINTEXT_SCHEMES:
+                if target.startswith(prefix):
+                    target = target[len(prefix):]
+                    break
+            target = target.rstrip("/")
+            loop = asyncio.get_event_loop()
+            envelope = await loop.run_in_executor(
+                _relay_executor,
+                lambda: _fetch_relay_result_sync(
+                    self.task_id, target, token, use_tls, ca_pem, key,
+                ),
+            )
+
+        if envelope is not None:
+            import dataclasses
+            self._result = dataclasses.replace(
+                self._result, output=envelope.get("output"),
+            )
+        elif self._result.output is None:
+            raise TaskError(
+                "Task completed but its result was not delivered from the "
+                "relay mailbox (retention expired, storage overflow, or the "
+                "worker could not upload it). Re-run the task.",
+                task_id=self.task_id,
+            )
 
     async def status(self) -> dict[str, Any]:
         """Single poll — return raw status dict from broker."""
