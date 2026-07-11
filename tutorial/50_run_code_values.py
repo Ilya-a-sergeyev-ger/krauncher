@@ -1,4 +1,4 @@
-"""Tutorial 37: run_code — send local values to the GPU task and get results back.
+"""Tutorial 50: run_code — send local values to the GPU task and get results back.
 
 The values API executes a code *string* remotely (the same primitive notebook
 and editor adapters build on). Named local values ride into the task as plain
