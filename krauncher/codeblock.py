@@ -1,13 +1,13 @@
 # Copyright (c) 2026 Ilya Sergeev. Licensed under the MIT License.
 
-"""Synthesize a remote task function from a code block.
+"""Synthesize remote-task source from a code block.
 
 The application-agnostic base for adapters that submit code *strings* (a
 notebook cell, an editor selection) rather than decorated functions. The block
 becomes the body of a generated function whose parameters are the input names
-and whose return value is the ``{name: value}`` outputs dict. The generated
-source is registered in ``linecache`` so ``inspect.getsource`` — which
-krauncher's serializer relies on — works on the exec'd function object.
+and whose return value is the ``{name: value}`` outputs dict. The synthesized
+source is submitted directly — the same ``(code_string, entry_point)`` shape
+``serialize_function`` produces for decorated functions.
 
 The generated function is exactly what the analyzer classifies and the worker
 executes: plain user code, no transport scaffolding. Inputs/outputs therefore
@@ -18,15 +18,11 @@ data goes through a data source / volume, not through the function body.
 from __future__ import annotations
 
 import ast
-import linecache
 import textwrap
-from itertools import count
-from typing import Callable
 
 from .exceptions import SerializationError
 
 _ENTRY = "_kr_cell"
-_seq = count(1)
 
 _PROLOGUE = f"""\
 def {_ENTRY}({{params}}):
@@ -55,8 +51,8 @@ def _reject_unsupported(code: str) -> None:
             )
 
 
-def build_code_function(code: str, inputs: list[str], outputs: list[str]) -> Callable:
-    """Generate, exec and return the wrapper function for a code block."""
+def build_code_source(code: str, inputs: list[str], outputs: list[str]) -> tuple[str, str]:
+    """Synthesize ``(code_string, entry_point)`` for a code block."""
     _reject_unsupported(code)
 
     params = ", ".join(f"{n}=None" for n in inputs)
@@ -69,11 +65,14 @@ def build_code_function(code: str, inputs: list[str], outputs: list[str]) -> Cal
         + _EPILOGUE.format(returns=returns)
     )
 
-    # Register in linecache under a unique pseudo-filename so
-    # inspect.getsource (used by krauncher's serializer) sees the code.
-    filename = f"<krauncher-cell-{next(_seq)}>"
-    linecache.cache[filename] = (len(source), None, source.splitlines(True), filename)
+    # The body parses on its own, but the assembled wrapper can still be
+    # invalid (e.g. a block indented with tabs) — mirror serialize_function's
+    # compile guard so the failure happens client-side with a clear message.
+    try:
+        compile(source, f"<krauncher:{_ENTRY}>", "exec")
+    except SyntaxError as exc:
+        raise SerializationError(
+            f"synthesized source for the code block is not valid Python: {exc}"
+        ) from exc
 
-    namespace: dict = {}
-    exec(compile(source, filename, "exec"), namespace)  # noqa: S102
-    return namespace[_ENTRY]
+    return source, _ENTRY

@@ -2,13 +2,13 @@
 
 """Tests for krauncher.codeblock and KrauncherClient.run_code."""
 
-import inspect
-from unittest.mock import MagicMock
+import linecache
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from krauncher import KrauncherClient, SerializationError, ValueTransferError
-from krauncher.codeblock import build_code_function
+from krauncher.codeblock import build_code_source
 from krauncher.serializer import serialize_function
 from krauncher.values import decode_outputs, encode_inputs
 
@@ -18,48 +18,61 @@ INS = ["epochs", "name", "data", "ratio"]
 OUTS = ["total", "label"]
 
 
+def _exec_entry(source: str, entry: str):
+    """Run the synthesized source standalone, as the worker does."""
+    ns: dict = {}
+    exec(compile(source, "<worker>", "exec"), ns)  # noqa: S102
+    return ns[entry]
+
+
 # ---------------------------------------------------------------------------
-# build_code_function
+# build_code_source
 # ---------------------------------------------------------------------------
 
-def test_roundtrip_through_generated_function():
+def test_roundtrip_through_generated_source():
+    source, entry = build_code_source(CODE, INS, OUTS)
+    assert entry == "_kr_cell"
     kwargs = encode_inputs(INS, NS)
-    fn = build_code_function(CODE, INS, OUTS)
+    fn = _exec_entry(source, entry)
     assert decode_outputs(fn(**kwargs), OUTS) == {"total": 18, "label": "BERT"}
 
 
-def test_serializer_worker_simulation():
-    """krauncher's serialize_function must see the generated source, and the
-    serialized string must execute standalone (as the worker does)."""
-    fn = build_code_function(CODE, INS, OUTS)
-    code_string, entry = serialize_function(fn)
-    assert entry == "_kr_cell"
+def test_source_identical_to_exec_serialize_path():
+    """2b invariant: the directly synthesized source must be byte-identical
+    to what the pre-2b detour produced (exec via linecache, then
+    serialize_function on the function object)."""
+    source, entry = build_code_source(CODE, INS, OUTS)
+
+    filename = "<invariance-check>"
+    linecache.cache[filename] = (len(source), None, source.splitlines(True), filename)
     ns: dict = {}
-    exec(compile(code_string, "<worker>", "exec"), ns)  # noqa: S102
-    kwargs = encode_inputs(INS, NS)
-    assert decode_outputs(ns[entry](**kwargs), OUTS) == {"total": 18, "label": "BERT"}
+    exec(compile(source, filename, "exec"), ns)  # noqa: S102
+    code_string, entry2 = serialize_function(ns[entry])
+
+    assert code_string == source
+    assert entry2 == entry
 
 
 def test_generated_source_is_plain_user_code():
     """What the analyzer classifies and the worker runs must be the block
     body, with no transport scaffolding leaking in."""
-    src = inspect.getsource(build_code_function(CODE, INS, OUTS))
+    source, _ = build_code_source(CODE, INS, OUTS)
     for token in ("pickle", "base64", "_kr_dec", "_kr_enc", "b64"):
-        assert token not in src
+        assert token not in source
 
 
 def test_syntax_error_rejected():
     with pytest.raises(SerializationError, match="does not parse"):
-        build_code_function("def broken(:\n", [], [])
+        build_code_source("def broken(:\n", [], [])
 
 
 def test_toplevel_global_rejected():
     with pytest.raises(SerializationError, match="global"):
-        build_code_function("global x\nx = 1", [], ["x"])
+        build_code_source("global x\nx = 1", [], ["x"])
 
 
 def test_nested_global_allowed():
-    build_code_function("def f():\n    global q\n    q = 1\nf()", [], [])
+    build_code_source("def f():\n    global q\n    q = 1\nf()", [], [])
 
 
 # ---------------------------------------------------------------------------
@@ -71,37 +84,21 @@ def _make_client() -> KrauncherClient:
 
 
 @pytest.mark.asyncio
-async def test_run_code_wires_through_task():
-    """run_code must build the block function and submit it through task()
-    with the input values as kwargs and options forwarded."""
+async def test_run_code_wires_through_submit():
+    """run_code must synthesize the block source and pass it to _submit with
+    the input values as kwargs and options forwarded."""
     client = _make_client()
-    captured: dict = {}
+    client._submit = AsyncMock(return_value=MagicMock(name="handle"))
 
-    def fake_task(**options):
-        captured["options"] = options
+    inputs = {k: NS[k] for k in INS}
+    await client.run_code(CODE, inputs=inputs, outputs=OUTS, pip=["torch"], timeout=120)
 
-        def decorator(fn):
-            captured["fn"] = fn
-
-            async def submit(**kwargs):
-                captured["kwargs"] = kwargs
-                return MagicMock(name="handle")
-
-            return submit
-        return decorator
-
-    client.task = fake_task
-    await client.run_code(
-        CODE, inputs={k: NS[k] for k in INS}, outputs=OUTS,
-        pip=["torch"], timeout=120,
-    )
-
-    assert captured["options"] == {"pip": ["torch"], "timeout": 120}
-    assert captured["kwargs"] == {k: NS[k] for k in INS}
-    # The captured fn is the generated block function itself.
-    assert decode_outputs(captured["fn"](**captured["kwargs"]), OUTS) == {
-        "total": 18, "label": "BERT",
-    }
+    (code_string, entry, kwargs), options = client._submit.call_args
+    assert kwargs == inputs
+    assert options == {"pip": ["torch"], "timeout": 120}
+    # The submitted source is the generated block function.
+    fn = _exec_entry(code_string, entry)
+    assert decode_outputs(fn(**kwargs), OUTS) == {"total": 18, "label": "BERT"}
 
 
 @pytest.mark.asyncio

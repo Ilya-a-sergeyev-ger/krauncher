@@ -374,11 +374,6 @@ class KrauncherClient:
 
         client = self
 
-        # Env override for the declared VRAM class (see class docstring).
-        _vram_env = os.environ.get("KRAUNCHER_VRAM_GB", "")
-        if _vram_env:
-            vram_gb = int(_vram_env)
-
         def decorator(func: Callable) -> Callable:
             # Serialize at decoration time — fail fast on invalid functions
             code_string, entry_point = serialize_function(func)
@@ -400,190 +395,16 @@ class KrauncherClient:
 
             @functools.wraps(func)
             async def wrapper(**kwargs: Any) -> TaskHandle:
-                import time as _time
-                _submit_start = _time.monotonic()
-                # Merge defaults with passed kwargs (passed values take priority)
-                merged_kwargs = {**_func_defaults, **kwargs}
-
-                # Classification: call analyzer once, cache for subsequent calls.
-                if _cached_classification[0] is not None:
-                    classification = _cached_classification[0]
-                else:
-                    # _analyzer raises KrauncherError if no analyzer configured
-                    try:
-                        # Query broker for data source sizes to improve CU estimation
-                        dataset_mb = dataset_size or await client._resolve_dataset_mb(data, volume)
-                        classification = await client._analyzer.classify(
-                            code_string, dataset_mb=dataset_mb, kwargs=merged_kwargs,
-                        )
-                    except KrauncherError:
-                        raise
-                    except Exception as exc:
-                        raise KrauncherError(
-                            f"Analyzer failed and CU estimation is unavailable: {exc}"
-                        ) from exc
-                    _cached_classification[0] = classification
-
-                if vram_gb is not None:
-                    # Level 1 override: keep analyzer's compute_units/duration/perf_table,
-                    # but force vram_gb (with 10% headroom) and recalculate tier.
-                    # Copy first — cached classification is shared across calls.
-                    import dataclasses
-                    classification = dataclasses.replace(classification)
-                    explicit = classify_explicit(vram_gb)
-                    classification.min_vram_gb = explicit.min_vram_gb
-                    classification.tier = explicit.tier
-                    classification.confidence = explicit.confidence
-                    classification.analysis_method = explicit.analysis_method
-
-                if _logger.isEnabledFor(logging.DEBUG):
-                    c = classification
-                    cu_str = str(c.compute_units)
-                    if c.cu_compute is not None:
-                        cu_str += f" (compute={c.cu_compute}, io={c.cu_io}"
-                        if c.model_download_mb is not None:
-                            cu_str += f", model={c.model_download_mb:.0f}MB"
-                        if c.dataset_mb is not None:
-                            cu_str += f", dataset={c.dataset_mb:.0f}MB"
-                        cu_str += ")"
-                    parts = [
-                        f"tier={c.tier}",
-                        f"VRAM={c.min_vram_gb}GB",
-                        f"CU={cu_str}",
-                        f"method={c.analysis_method}",
-                    ]
-                    if c.cpu_only:
-                        parts.append("cpu_only=True")
-                    if c.input_tokens is not None:
-                        parts.append(f"input_tokens={c.input_tokens}")
-                    if c.seq_len is not None:
-                        parts.append(f"seq_len={c.seq_len}")
-                    if c.workload_type:
-                        parts.append(f"workload={c.workload_type}")
-                    if c.model_size_category:
-                        parts.append(f"model_size={c.model_size_category}")
-                    if c.working_set_category:
-                        parts.append(f"working_set={c.working_set_category}")
-                    if c.data_per_step:
-                        data_str = f"{c.data_per_step_gb:.1f}GB" if c.data_per_step_gb else ""
-                        parts.append(f"data/step={c.data_per_step}({data_str})")
-                    if c.compute_per_step:
-                        comp_str = f"{c.compute_per_step_tflops:.2f}TF" if c.compute_per_step_tflops else ""
-                        parts.append(f"compute/step={c.compute_per_step}({comp_str})")
-                    if c.resource_profile:
-                        rp = c.resource_profile
-                        parts.append(
-                            f"profile=[ci={rp.get('compute_intensity', 0):.2f},"
-                            f"si={rp.get('storage_io_sensitivity', 0):.2f},"
-                            f"cu={rp.get('cpu_utilization', 0):.2f},"
-                            f"pcie={rp.get('pcie_bandwidth_util', 0):.2f},"
-                            f"net={rp.get('network_io_sensitivity', 0):.2f}]"
-                        )
-                    # Generic pass-through: any unmapped analyzer debug field
-                    # (cu_prefill/cu_decode and future) prints itself — no per-field code.
-                    for _k, _v in c.extra_debug.items():
-                        parts.append(f"{_k}={_v}")
-                    if c.analyzer_time is not None:
-                        parts.append(f"time={c.analyzer_time:.2f}s")
-                    _logger.debug("Classification: %s", ", ".join(parts))
-
-                if client.estimate_only:
-                    c = classification
-                    _logger.info(
-                        "estimate_only=true — skipping broker submission "
-                        "(CU=%s, VRAM=%sGB, tier=%s, method=%s, cpu_only=%s)",
-                        c.compute_units, c.min_vram_gb, c.tier, c.analysis_method, c.cpu_only,
-                    )
-                    # Do NOT exit: return a stub handle so the script continues
-                    # and every decorated function gets its own analyze request
-                    # (multi-task scripts, e.g. 17 phase1/phase2).
-                    return _EstimateOnlyHandle(classification)
-
-                # Priority: decorator param → client default (from env or constructor)
-                final_gpu_arch = gpu_arch if gpu_arch is not None else client.default_gpu_arch
-                final_gpu_name = gpu_name if gpu_name is not None else client.default_gpu_name
-
-                requirements: dict[str, Any] = {
-                    "min_vram_gb": classification.min_vram_gb,
-                    "gpu_arch": final_gpu_arch,
-                    "gpu_name": final_gpu_name,
-                    "disk_gb": disk_gb,
-                }
-                if provider is not None:
-                    requirements["provider_name"] = provider
-
-                # E2E encryption: generate ephemeral keypair, withhold plaintext code
-                ek_priv = None
-                if client.encrypt:
-                    import base64
-                    from .crypto import generate_keypair
-                    ek_priv, ek_pub_bytes = generate_keypair()
-                    ek_pub_b64 = base64.urlsafe_b64encode(ek_pub_bytes).decode().rstrip("=")
-                    payload_body: dict[str, Any] = {
-                        "code_string": "",
-                        "entry_point": entry_point,
-                        "args": {},
-                        "pip": pip or [],
-                        "encryption_key": ek_pub_b64,
-                    }
-                else:
-                    payload_body = {
-                        "code_string": code_string,
-                        "entry_point": entry_point,
-                        "args": merged_kwargs,
-                        "pip": pip or [],
-                    }
-
-                effective_stream_stderr = (
-                    stream_stderr if stream_stderr is not None else client.stream_stderr
-                )
-
-                body: dict[str, Any] = {
-                    "priority": priority,
-                    "requirements": requirements,
-                    "payload": payload_body,
-                    "data_bridge": {
-                        "download_urls": data_urls or [],
-                        "mount_path": "/data",
-                    },
-                    "limits": {
-                        "timeout_sec": timeout,
-                        "stream_stderr": effective_stream_stderr,
-                    },
-                }
-
-                if group_id is not None:
-                    body["group_id"] = group_id
-                if data is not None:
-                    body["data"] = data
-                if output is not None:
-                    body["output"] = output
-                if volume is not None:
-                    body["volume"] = volume
-
-                body["classification"] = classification.to_dict()
-
-                async def _post_task() -> str:
-                    async with httpx.AsyncClient(timeout=30.0) as session:
-                        resp = await session.post(
-                            f"{client.broker_url}/tasks",
-                            json=body,
-                            headers={"X-API-Key": client.api_key},
-                        )
-                        _check_response(resp)
-                        return resp.json()["task_id"]
-
-                task_id = await _post_task()
-                return TaskHandle(
-                    task_id=task_id,
-                    client=client,
-                    ek_priv=ek_priv,
-                    plaintext_code=code_string if client.encrypt else None,
-                    plaintext_args=kwargs if client.encrypt else None,
-                    classification=classification,
-                    submit_start=_submit_start,
-                    resubmit=_post_task,
-                    stream_stderr=effective_stream_stderr,
+                return await client._submit(
+                    code_string, entry_point, kwargs,
+                    func_defaults=_func_defaults,
+                    classification_cache=_cached_classification,
+                    vram_gb=vram_gb, gpu_arch=gpu_arch, gpu_name=gpu_name,
+                    pip=pip, timeout=timeout, priority=priority,
+                    data_urls=data_urls, data=data, output=output,
+                    volume=volume, group_id=group_id, provider=provider,
+                    disk_gb=disk_gb, dataset_size=dataset_size,
+                    stream_stderr=stream_stderr,
                 )
 
             # Store metadata for introspection
@@ -595,6 +416,230 @@ class KrauncherClient:
             return wrapper
 
         return decorator
+
+    async def _submit(
+        self,
+        code_string: str,
+        entry_point: str,
+        kwargs: dict[str, Any],
+        *,
+        func_defaults: dict[str, Any] | None = None,
+        classification_cache: list | None = None,
+        vram_gb: int | None = None,
+        gpu_arch: str | None = None,
+        gpu_name: str | None = None,
+        pip: list[str] | None = None,
+        timeout: int = 600,
+        priority: int = 1,
+        data_urls: list[str] | None = None,
+        data: str | None = None,
+        output: str | None = None,
+        volume: str | None = None,
+        group_id: str | None = None,
+        provider: str | None = None,
+        disk_gb: int = 10,
+        dataset_size: float | None = None,
+        stream_stderr: bool | None = None,
+    ) -> TaskHandle:
+        """Submission core shared by :meth:`task` and :meth:`run_code`.
+
+        Classify -> resolve requirements -> build the payload (plaintext
+        withheld under E2E) -> POST /tasks -> :class:`TaskHandle`.
+        Body moved verbatim from the task() wrapper.
+        """
+        client = self
+        # Env override for the declared VRAM class (see task() docstring).
+        _vram_env = os.environ.get("KRAUNCHER_VRAM_GB", "")
+        if _vram_env:
+            vram_gb = int(_vram_env)
+
+        import time as _time
+        _submit_start = _time.monotonic()
+        # Merge defaults with passed kwargs (passed values take priority)
+        merged_kwargs = {**(func_defaults or {}), **kwargs}
+
+        # Classification: call analyzer once, cache for subsequent calls.
+        if classification_cache is not None and classification_cache[0] is not None:
+            classification = classification_cache[0]
+        else:
+            # _analyzer raises KrauncherError if no analyzer configured
+            try:
+                # Query broker for data source sizes to improve CU estimation
+                dataset_mb = dataset_size or await client._resolve_dataset_mb(data, volume)
+                classification = await client._analyzer.classify(
+                    code_string, dataset_mb=dataset_mb, kwargs=merged_kwargs,
+                )
+            except KrauncherError:
+                raise
+            except Exception as exc:
+                raise KrauncherError(
+                    f"Analyzer failed and CU estimation is unavailable: {exc}"
+                ) from exc
+            if classification_cache is not None:
+                classification_cache[0] = classification
+
+        if vram_gb is not None:
+            # Level 1 override: keep analyzer's compute_units/duration/perf_table,
+            # but force vram_gb (with 10% headroom) and recalculate tier.
+            # Copy first — cached classification is shared across calls.
+            import dataclasses
+            classification = dataclasses.replace(classification)
+            explicit = classify_explicit(vram_gb)
+            classification.min_vram_gb = explicit.min_vram_gb
+            classification.tier = explicit.tier
+            classification.confidence = explicit.confidence
+            classification.analysis_method = explicit.analysis_method
+
+        if _logger.isEnabledFor(logging.DEBUG):
+            c = classification
+            cu_str = str(c.compute_units)
+            if c.cu_compute is not None:
+                cu_str += f" (compute={c.cu_compute}, io={c.cu_io}"
+                if c.model_download_mb is not None:
+                    cu_str += f", model={c.model_download_mb:.0f}MB"
+                if c.dataset_mb is not None:
+                    cu_str += f", dataset={c.dataset_mb:.0f}MB"
+                cu_str += ")"
+            parts = [
+                f"tier={c.tier}",
+                f"VRAM={c.min_vram_gb}GB",
+                f"CU={cu_str}",
+                f"method={c.analysis_method}",
+            ]
+            if c.cpu_only:
+                parts.append("cpu_only=True")
+            if c.input_tokens is not None:
+                parts.append(f"input_tokens={c.input_tokens}")
+            if c.seq_len is not None:
+                parts.append(f"seq_len={c.seq_len}")
+            if c.workload_type:
+                parts.append(f"workload={c.workload_type}")
+            if c.model_size_category:
+                parts.append(f"model_size={c.model_size_category}")
+            if c.working_set_category:
+                parts.append(f"working_set={c.working_set_category}")
+            if c.data_per_step:
+                data_str = f"{c.data_per_step_gb:.1f}GB" if c.data_per_step_gb else ""
+                parts.append(f"data/step={c.data_per_step}({data_str})")
+            if c.compute_per_step:
+                comp_str = f"{c.compute_per_step_tflops:.2f}TF" if c.compute_per_step_tflops else ""
+                parts.append(f"compute/step={c.compute_per_step}({comp_str})")
+            if c.resource_profile:
+                rp = c.resource_profile
+                parts.append(
+                    f"profile=[ci={rp.get('compute_intensity', 0):.2f},"
+                    f"si={rp.get('storage_io_sensitivity', 0):.2f},"
+                    f"cu={rp.get('cpu_utilization', 0):.2f},"
+                    f"pcie={rp.get('pcie_bandwidth_util', 0):.2f},"
+                    f"net={rp.get('network_io_sensitivity', 0):.2f}]"
+                )
+            # Generic pass-through: any unmapped analyzer debug field
+            # (cu_prefill/cu_decode and future) prints itself — no per-field code.
+            for _k, _v in c.extra_debug.items():
+                parts.append(f"{_k}={_v}")
+            if c.analyzer_time is not None:
+                parts.append(f"time={c.analyzer_time:.2f}s")
+            _logger.debug("Classification: %s", ", ".join(parts))
+
+        if client.estimate_only:
+            c = classification
+            _logger.info(
+                "estimate_only=true — skipping broker submission "
+                "(CU=%s, VRAM=%sGB, tier=%s, method=%s, cpu_only=%s)",
+                c.compute_units, c.min_vram_gb, c.tier, c.analysis_method, c.cpu_only,
+            )
+            # Do NOT exit: return a stub handle so the script continues
+            # and every decorated function gets its own analyze request
+            # (multi-task scripts, e.g. 17 phase1/phase2).
+            return _EstimateOnlyHandle(classification)
+
+        # Priority: decorator param → client default (from env or constructor)
+        final_gpu_arch = gpu_arch if gpu_arch is not None else client.default_gpu_arch
+        final_gpu_name = gpu_name if gpu_name is not None else client.default_gpu_name
+
+        requirements: dict[str, Any] = {
+            "min_vram_gb": classification.min_vram_gb,
+            "gpu_arch": final_gpu_arch,
+            "gpu_name": final_gpu_name,
+            "disk_gb": disk_gb,
+        }
+        if provider is not None:
+            requirements["provider_name"] = provider
+
+        # E2E encryption: generate ephemeral keypair, withhold plaintext code
+        ek_priv = None
+        if client.encrypt:
+            import base64
+            from .crypto import generate_keypair
+            ek_priv, ek_pub_bytes = generate_keypair()
+            ek_pub_b64 = base64.urlsafe_b64encode(ek_pub_bytes).decode().rstrip("=")
+            payload_body: dict[str, Any] = {
+                "code_string": "",
+                "entry_point": entry_point,
+                "args": {},
+                "pip": pip or [],
+                "encryption_key": ek_pub_b64,
+            }
+        else:
+            payload_body = {
+                "code_string": code_string,
+                "entry_point": entry_point,
+                "args": merged_kwargs,
+                "pip": pip or [],
+            }
+
+        effective_stream_stderr = (
+            stream_stderr if stream_stderr is not None else client.stream_stderr
+        )
+
+        body: dict[str, Any] = {
+            "priority": priority,
+            "requirements": requirements,
+            "payload": payload_body,
+            "data_bridge": {
+                "download_urls": data_urls or [],
+                "mount_path": "/data",
+            },
+            "limits": {
+                "timeout_sec": timeout,
+                "stream_stderr": effective_stream_stderr,
+            },
+        }
+
+        if group_id is not None:
+            body["group_id"] = group_id
+        if data is not None:
+            body["data"] = data
+        if output is not None:
+            body["output"] = output
+        if volume is not None:
+            body["volume"] = volume
+
+        body["classification"] = classification.to_dict()
+
+        async def _post_task() -> str:
+            async with httpx.AsyncClient(timeout=30.0) as session:
+                resp = await session.post(
+                    f"{client.broker_url}/tasks",
+                    json=body,
+                    headers={"X-API-Key": client.api_key},
+                )
+                _check_response(resp)
+                return resp.json()["task_id"]
+
+        task_id = await _post_task()
+        return TaskHandle(
+            task_id=task_id,
+            client=client,
+            ek_priv=ek_priv,
+            plaintext_code=code_string if client.encrypt else None,
+            plaintext_args=kwargs if client.encrypt else None,
+            classification=classification,
+            submit_start=_submit_start,
+            resubmit=_post_task,
+            stream_stderr=effective_stream_stderr,
+        )
+
 
     async def run_code(
         self,
@@ -627,7 +672,7 @@ class KrauncherClient:
         Returns:
             A :class:`TaskHandle`; ``result.output`` is the outputs dict.
         """
-        from .codeblock import build_code_function
+        from .codeblock import build_code_source
         from .values import INLINE_BUDGET_BYTES, encode_inputs
 
         inputs = inputs or {}
@@ -641,9 +686,8 @@ class KrauncherClient:
             )
         kwargs = encode_inputs(list(inputs), inputs, limit_bytes=budget)
 
-        fn = build_code_function(code, list(inputs), outputs)
-        task_fn = self.task(**task_options)(fn)
-        return await task_fn(**kwargs)
+        source, entry_point = build_code_source(code, list(inputs), outputs)
+        return await self._submit(source, entry_point, kwargs, **task_options)
 
     def data_source(
         self,
