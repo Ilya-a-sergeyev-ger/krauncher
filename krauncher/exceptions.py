@@ -145,6 +145,15 @@ class SerializationError(KrauncherError):
     """Raised when a function cannot be serialized for remote execution."""
 
 
+class ValueTransferError(KrauncherError):
+    """Raised when a value cannot cross the caller ↔ task boundary.
+
+    Inputs must be JSON-serializable and fit the inline budget (see
+    ``krauncher.values``); outputs must come back as the ``{name: value}``
+    dict with every requested name present.
+    """
+
+
 class E2EIdentityMismatch(KrauncherError):
     """Raised when the worker pubkey from relay does not match what the
     broker reported. Indicates a relay attempting an MITM on the E2E channel.
