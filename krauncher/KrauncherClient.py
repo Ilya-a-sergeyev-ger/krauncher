@@ -22,7 +22,7 @@ from .analyzer import (
     classify_safety_net,
 )
 from .data_source import DataSource
-from .exceptions import KrauncherError
+from .exceptions import KrauncherError, ValueTransferError
 from .models import Runner, TaskHandle, _check_response
 from .serializer import serialize_function
 from .volume import Volume
@@ -595,6 +595,55 @@ class KrauncherClient:
             return wrapper
 
         return decorator
+
+    async def run_code(
+        self,
+        code: str,
+        *,
+        inputs: dict[str, Any] | None = None,
+        outputs: list[str] | None = None,
+        **task_options: Any,
+    ) -> "TaskHandle":
+        """Run a code block (a notebook cell, an editor selection) remotely.
+
+        The application-agnostic entry point for adapters: *code* becomes the
+        body of a generated task function, *inputs* are named values injected
+        into its namespace (and visible to the analyzer's CU estimation), and
+        the names in *outputs* are collected from the block's namespace and
+        returned as the task's output dict — decode it with
+        :func:`krauncher.values.decode_outputs`.
+
+        Values must be JSON-safe and fit the inline budget together with the
+        code (see ``krauncher.values``); larger data goes through a
+        volume / data source.
+
+        Args:
+            code: The code block to execute remotely.
+            inputs: ``{name: value}`` injected as the block's variables.
+            outputs: Variable names to return from the block's namespace.
+            **task_options: Same options as :meth:`task` (``pip``, ``timeout``,
+                ``vram_gb``, ``gpu_name``, ``volume``, ...).
+
+        Returns:
+            A :class:`TaskHandle`; ``result.output`` is the outputs dict.
+        """
+        from .codeblock import build_code_function
+        from .values import INLINE_BUDGET_BYTES, encode_inputs
+
+        inputs = inputs or {}
+        outputs = outputs or []
+
+        budget = INLINE_BUDGET_BYTES - len(code.encode("utf-8"))
+        if budget <= 0:
+            raise ValueTransferError(
+                f"code block alone exceeds the "
+                f"{INLINE_BUDGET_BYTES / (1024 * 1024):.1f} MB inline budget"
+            )
+        kwargs = encode_inputs(list(inputs), inputs, limit_bytes=budget)
+
+        fn = build_code_function(code, list(inputs), outputs)
+        task_fn = self.task(**task_options)(fn)
+        return await task_fn(**kwargs)
 
     def data_source(
         self,
