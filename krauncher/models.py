@@ -802,18 +802,50 @@ class TaskHandle:
         relay_task: asyncio.Task | None = None
 
         # When stream_stderr is on and the caller didn't provide on_log, mirror
-        # remote stdout/stderr to local sys.stdout/sys.stderr.
+        # remote stdout/stderr to local sys.stdout/sys.stderr and render GPU
+        # metrics as a single \r-overwritten progress line.
         if on_log is None and self.stream_stderr:
             import sys as _sys
+            import time as _t
+
+            _pl = {"start": None, "open_len": 0}
+
+            def _close_progress_line() -> None:
+                if _pl["open_len"]:
+                    _sys.stdout.write("\r" + " " * _pl["open_len"] + "\r")
+                    _sys.stdout.flush()
+                    _pl["open_len"] = 0
 
             def _console_on_log(msg: dict) -> None:
                 t = msg.get("type")
+                d = msg.get("data") or {}
                 if t == "stdout":
-                    _sys.stdout.write((msg.get("data") or {}).get("text", ""))
+                    _close_progress_line()
+                    _sys.stdout.write(d.get("text", ""))
                     _sys.stdout.flush()
                 elif t == "stderr":
-                    _sys.stderr.write((msg.get("data") or {}).get("text", ""))
+                    _close_progress_line()
+                    _sys.stderr.write(d.get("text", ""))
                     _sys.stderr.flush()
+                elif t == "metric":
+                    if _pl["start"] is None:
+                        _pl["start"] = _t.monotonic()
+                    line = (
+                        f"[gpu {d.get('gpu_util_pct', 0):3.0f}% · "
+                        f"vram {d.get('vram_used_gb', 0):.1f}/"
+                        f"{d.get('vram_total_gb', 0):.0f} GB · "
+                        f"{_t.monotonic() - _pl['start']:.0f}s]"
+                    )
+                    pad = max(0, _pl["open_len"] - len(line))
+                    _sys.stdout.write("\r" + line + " " * pad)
+                    _sys.stdout.flush()
+                    _pl["open_len"] = len(line)
+                elif t == "event":
+                    name = d.get("name", "")
+                    if name == "execution_started":
+                        _pl["start"] = _t.monotonic()
+                    elif name in ("execution_complete", "stream_ended"):
+                        _close_progress_line()
 
             on_log = _console_on_log
 
