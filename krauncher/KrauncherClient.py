@@ -425,6 +425,7 @@ class KrauncherClient:
         *,
         func_defaults: dict[str, Any] | None = None,
         classification_cache: list | None = None,
+        classification: TaskClassification | None = None,
         vram_gb: int | None = None,
         gpu_arch: str | None = None,
         gpu_name: str | None = None,
@@ -443,20 +444,66 @@ class KrauncherClient:
     ) -> TaskHandle:
         """Submission core shared by :meth:`task` and :meth:`run_code`.
 
-        Classify -> resolve requirements -> build the payload (plaintext
-        withheld under E2E) -> POST /tasks -> :class:`TaskHandle`.
-        Body moved verbatim from the task() wrapper.
+        Two phases: :meth:`_classify` (analysis request; skipped when a
+        precomputed *classification* is passed) -> :meth:`_execute`
+        (execution request). The ``estimate_only`` guard sits between them.
+        """
+        import time as _time
+        _submit_start = _time.monotonic()
+        # Merge defaults with passed kwargs (passed values take priority)
+        merged_kwargs = {**(func_defaults or {}), **kwargs}
+
+        if classification is None:
+            classification = await self._classify(
+                code_string, merged_kwargs,
+                vram_gb=vram_gb, data=data, volume=volume,
+                dataset_size=dataset_size,
+                classification_cache=classification_cache,
+            )
+
+        if self.estimate_only:
+            c = classification
+            _logger.info(
+                "estimate_only=true — skipping broker submission "
+                "(CU=%s, VRAM=%sGB, tier=%s, method=%s, cpu_only=%s)",
+                c.compute_units, c.min_vram_gb, c.tier, c.analysis_method, c.cpu_only,
+            )
+            # Do NOT exit: return a stub handle so the script continues
+            # and every decorated function gets its own analyze request
+            # (multi-task scripts, e.g. 17 phase1/phase2).
+            return _EstimateOnlyHandle(classification)
+
+        return await self._execute(
+            code_string, entry_point, kwargs, merged_kwargs, classification,
+            gpu_arch=gpu_arch, gpu_name=gpu_name, pip=pip, timeout=timeout,
+            priority=priority, data_urls=data_urls, data=data, output=output,
+            volume=volume, group_id=group_id, provider=provider,
+            disk_gb=disk_gb, stream_stderr=stream_stderr,
+            submit_start=_submit_start,
+        )
+
+    async def _classify(
+        self,
+        code_string: str,
+        merged_kwargs: dict[str, Any],
+        *,
+        vram_gb: int | None = None,
+        data: str | None = None,
+        volume: str | None = None,
+        dataset_size: float | None = None,
+        classification_cache: list | None = None,
+    ) -> TaskClassification:
+        """Analysis phase: classify the code via cas-analyzer.
+
+        Resolves the dataset size, applies the explicit/env vram_gb override,
+        caches per decorated function, and logs the result at DEBUG level.
+        No broker submission happens here.
         """
         client = self
         # Env override for the declared VRAM class (see task() docstring).
         _vram_env = os.environ.get("KRAUNCHER_VRAM_GB", "")
         if _vram_env:
             vram_gb = int(_vram_env)
-
-        import time as _time
-        _submit_start = _time.monotonic()
-        # Merge defaults with passed kwargs (passed values take priority)
-        merged_kwargs = {**(func_defaults or {}), **kwargs}
 
         # Classification: call analyzer once, cache for subsequent calls.
         if classification_cache is not None and classification_cache[0] is not None:
@@ -541,18 +588,36 @@ class KrauncherClient:
                 parts.append(f"time={c.analyzer_time:.2f}s")
             _logger.debug("Classification: %s", ", ".join(parts))
 
-        if client.estimate_only:
-            c = classification
-            _logger.info(
-                "estimate_only=true — skipping broker submission "
-                "(CU=%s, VRAM=%sGB, tier=%s, method=%s, cpu_only=%s)",
-                c.compute_units, c.min_vram_gb, c.tier, c.analysis_method, c.cpu_only,
-            )
-            # Do NOT exit: return a stub handle so the script continues
-            # and every decorated function gets its own analyze request
-            # (multi-task scripts, e.g. 17 phase1/phase2).
-            return _EstimateOnlyHandle(classification)
+        return classification
 
+    async def _execute(
+        self,
+        code_string: str,
+        entry_point: str,
+        kwargs: dict[str, Any],
+        merged_kwargs: dict[str, Any],
+        classification: TaskClassification,
+        *,
+        gpu_arch: str | None = None,
+        gpu_name: str | None = None,
+        pip: list[str] | None = None,
+        timeout: int = 600,
+        priority: int = 1,
+        data_urls: list[str] | None = None,
+        data: str | None = None,
+        output: str | None = None,
+        volume: str | None = None,
+        group_id: str | None = None,
+        provider: str | None = None,
+        disk_gb: int = 10,
+        stream_stderr: bool | None = None,
+        submit_start: float | None = None,
+    ) -> TaskHandle:
+        """Execution phase: build the payload and POST /tasks.
+
+        Takes a ready :class:`TaskClassification` — no analyzer calls here.
+        """
+        client = self
         # Priority: decorator param → client default (from env or constructor)
         final_gpu_arch = gpu_arch if gpu_arch is not None else client.default_gpu_arch
         final_gpu_name = gpu_name if gpu_name is not None else client.default_gpu_name
@@ -635,7 +700,7 @@ class KrauncherClient:
             plaintext_code=code_string if client.encrypt else None,
             plaintext_args=kwargs if client.encrypt else None,
             classification=classification,
-            submit_start=_submit_start,
+            submit_start=submit_start,
             resubmit=_post_task,
             stream_stderr=effective_stream_stderr,
         )
@@ -667,17 +732,54 @@ class KrauncherClient:
             inputs: ``{name: value}`` injected as the block's variables.
             outputs: Variable names to return from the block's namespace.
             **task_options: Same options as :meth:`task` (``pip``, ``timeout``,
-                ``vram_gb``, ``gpu_name``, ``volume``, ...).
+                ``vram_gb``, ``gpu_name``, ``volume``, ...), plus
+                ``classification=`` — a precomputed :class:`TaskClassification`
+                from :meth:`estimate_code`; skips the analysis phase.
 
         Returns:
             A :class:`TaskHandle`; ``result.output`` is the outputs dict.
+        """
+        source, entry_point, kwargs = self._prepare_code_block(code, inputs, outputs)
+        return await self._submit(source, entry_point, kwargs, **task_options)
+
+    async def estimate_code(
+        self,
+        code: str,
+        *,
+        inputs: dict[str, Any] | None = None,
+        outputs: list[str] | None = None,
+        vram_gb: int | None = None,
+        data: str | None = None,
+        volume: str | None = None,
+        dataset_size: float | None = None,
+    ) -> TaskClassification:
+        """Analysis request for a code block — classify without submitting.
+
+        Synthesizes exactly the source :meth:`run_code` would submit, calls
+        the analyzer, and returns the :class:`TaskClassification`. Pass the
+        result to ``run_code(..., classification=...)`` to execute without
+        a second analysis.
+        """
+        source, _entry, kwargs = self._prepare_code_block(code, inputs, outputs)
+        return await self._classify(
+            source, kwargs,
+            vram_gb=vram_gb, data=data, volume=volume,
+            dataset_size=dataset_size,
+        )
+
+    def _prepare_code_block(
+        self,
+        code: str,
+        inputs: dict[str, Any] | None,
+        outputs: list[str] | None,
+    ) -> tuple[str, str, dict[str, Any]]:
+        """Shared front half of :meth:`run_code` / :meth:`estimate_code`:
+        synthesize the task source and encode inputs under the inline budget.
         """
         from .codeblock import build_code_source
         from .values import INLINE_BUDGET_BYTES, encode_inputs
 
         inputs = inputs or {}
-        outputs = outputs or []
-
         budget = INLINE_BUDGET_BYTES - len(code.encode("utf-8"))
         if budget <= 0:
             raise ValueTransferError(
@@ -685,9 +787,8 @@ class KrauncherClient:
                 f"{INLINE_BUDGET_BYTES / (1024 * 1024):.1f} MB inline budget"
             )
         kwargs = encode_inputs(list(inputs), inputs, limit_bytes=budget)
-
-        source, entry_point = build_code_source(code, list(inputs), outputs)
-        return await self._submit(source, entry_point, kwargs, **task_options)
+        source, entry_point = build_code_source(code, list(inputs), outputs or [])
+        return source, entry_point, kwargs
 
     def data_source(
         self,
