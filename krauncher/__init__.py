@@ -28,6 +28,9 @@ from ._env import load_dotenv as _load_dotenv
 _load_dotenv()
 
 _log = _logging.getLogger("krauncher")
+# Own handlers below — don't propagate to root, or environments with a
+# configured root handler (Colab) print every line twice.
+_log.propagate = False
 if not _log.handlers:
     # Progress lines (INFO) are ordinary output — stdout; Jupyter renders
     # stderr on a red background. Diagnostics stay on stderr: DEBUG (relay/CU
@@ -85,4 +88,4 @@ __all__ = [
     "ValueTransferError",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
