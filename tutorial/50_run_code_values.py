@@ -8,13 +8,19 @@ encrypted result mailbox: the broker never stores task data.
 
 Based on tutorial 14's custom CNN: training config and a locally generated
 validation batch go in; per-epoch losses and predictions come out.
+
+The transfer set is auto-detected with ``analyze_names`` — the same AST
+analysis the %%krauncher magic uses: free variables of the block are its
+inputs, assigned names are its outputs. ``lenient_outputs=True`` makes the
+task return only the values that are set and JSON-safe (model, tensors etc.
+are dropped remotely instead of failing the task).
 """
 
 import asyncio
 import random
 
 from krauncher import KrauncherClient
-from krauncher.values import decode_outputs
+from krauncher.codeblock import analyze_names
 
 client = KrauncherClient()
 
@@ -90,9 +96,6 @@ with torch.no_grad():
 device_name = str(device)
 """
 
-OUTPUTS = ["losses", "val_preds", "device_name"]
-
-
 async def main():
     if not client.api_key:
         print("ERROR: Set CAS_API_KEY in .env")
@@ -105,11 +108,18 @@ async def main():
         for _ in range(8)
     ]
 
+    # Auto-detect the transfer set from the code block itself.
+    free, assigned = analyze_names(TRAIN_CODE)
+    print(f"inputs (free variables): {free}")
+    print(f"outputs (assigned names): {assigned}")
+
+    local_values = {"epochs": 3, "batch_size": 32, "val_images": val_images}
     print("Submitting the training code block with local values...")
     handle = await client.run_code(
         TRAIN_CODE,
-        inputs={"epochs": 3, "batch_size": 32, "val_images": val_images},
-        outputs=OUTPUTS,
+        inputs={n: local_values[n] for n in free},
+        outputs=assigned,
+        lenient_outputs=True,  # drop unset / non-JSON-safe names remotely
         pip=["torch"],
         timeout=300,
     )
@@ -121,8 +131,10 @@ async def main():
         return  # dry run — nothing to decode
 
     result = await handle.wait()
-    values = decode_outputs(result.output, OUTPUTS)
 
+    # Only the transferable subset of `assigned` comes back.
+    values = result.output
+    print(f"returned: {sorted(values)}")
     print(f"Losses per epoch: {values['losses']}")
     print(f"Validation predictions: {values['val_preds']}")
     print(f"Trained on: {values['device_name']}")

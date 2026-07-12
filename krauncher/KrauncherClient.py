@@ -715,6 +715,7 @@ class KrauncherClient:
         *,
         inputs: dict[str, Any] | None = None,
         outputs: list[str] | None = None,
+        lenient_outputs: bool = False,
         **task_options: Any,
     ) -> "TaskHandle":
         """Run a code block (a notebook cell, an editor selection) remotely.
@@ -734,6 +735,9 @@ class KrauncherClient:
             code: The code block to execute remotely.
             inputs: ``{name: value}`` injected as the block's variables.
             outputs: Variable names to return from the block's namespace.
+            lenient_outputs: When ``True`` (auto-detected outputs), names
+                that are unset or non-JSON-safe are dropped remotely instead
+                of failing the task.
             **task_options: Same options as :meth:`task` (``pip``, ``timeout``,
                 ``vram_gb``, ``gpu_name``, ``volume``, ...), plus
                 ``classification=`` — a precomputed :class:`TaskClassification`
@@ -742,7 +746,9 @@ class KrauncherClient:
         Returns:
             A :class:`TaskHandle`; ``result.output`` is the outputs dict.
         """
-        source, entry_point, kwargs = self._prepare_code_block(code, inputs, outputs)
+        source, entry_point, kwargs = self._prepare_code_block(
+            code, inputs, outputs, lenient_outputs=lenient_outputs,
+        )
         return await self._submit(source, entry_point, kwargs, **task_options)
 
     async def estimate_code(
@@ -751,6 +757,7 @@ class KrauncherClient:
         *,
         inputs: dict[str, Any] | None = None,
         outputs: list[str] | None = None,
+        lenient_outputs: bool = False,
         vram_gb: int | None = None,
         data: str | None = None,
         volume: str | None = None,
@@ -763,7 +770,9 @@ class KrauncherClient:
         result to ``run_code(..., classification=...)`` to execute without
         a second analysis.
         """
-        source, _entry, kwargs = self._prepare_code_block(code, inputs, outputs)
+        source, _entry, kwargs = self._prepare_code_block(
+            code, inputs, outputs, lenient_outputs=lenient_outputs,
+        )
         return await self._classify(
             source, kwargs,
             vram_gb=vram_gb, data=data, volume=volume,
@@ -775,6 +784,8 @@ class KrauncherClient:
         code: str,
         inputs: dict[str, Any] | None,
         outputs: list[str] | None,
+        *,
+        lenient_outputs: bool = False,
     ) -> tuple[str, str, dict[str, Any]]:
         """Shared front half of :meth:`run_code` / :meth:`estimate_code`:
         synthesize the task source and encode inputs under the inline budget.
@@ -790,7 +801,9 @@ class KrauncherClient:
                 f"{INLINE_BUDGET_BYTES / (1024 * 1024):.1f} MB inline budget"
             )
         kwargs = encode_inputs(list(inputs), inputs, limit_bytes=budget)
-        source, entry_point = build_code_source(code, list(inputs), outputs or [])
+        source, entry_point = build_code_source(
+            code, list(inputs), outputs or [], lenient_outputs=lenient_outputs,
+        )
         return source, entry_point, kwargs
 
     def data_source(
