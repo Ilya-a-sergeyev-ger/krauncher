@@ -21,6 +21,7 @@ Usage::
 
 import logging as _logging
 import os as _os
+import sys as _sys
 
 # Load .env from CWD before anything else (does NOT override existing vars)
 from ._env import load_dotenv as _load_dotenv
@@ -28,9 +29,18 @@ _load_dotenv()
 
 _log = _logging.getLogger("krauncher")
 if not _log.handlers:
-    _handler = _logging.StreamHandler()
-    _handler.setFormatter(_logging.Formatter("%(message)s"))
-    _log.addHandler(_handler)
+    # Progress lines (INFO) are ordinary output — stdout; Jupyter renders
+    # stderr on a red background. Diagnostics stay on stderr: DEBUG (relay/CU
+    # traces, visible only with KRAUNCHER_DEBUG=1) and WARNING+.
+    _fmt = _logging.Formatter("%(message)s")
+    _out = _logging.StreamHandler(_sys.stdout)
+    _out.setFormatter(_fmt)
+    _out.addFilter(lambda r: _logging.INFO <= r.levelno < _logging.WARNING)
+    _log.addHandler(_out)
+    _err = _logging.StreamHandler()
+    _err.setFormatter(_fmt)
+    _err.addFilter(lambda r: r.levelno < _logging.INFO or r.levelno >= _logging.WARNING)
+    _log.addHandler(_err)
 if _os.getenv("KRAUNCHER_DEBUG", "").lower() in ("1", "true", "yes"):
     _log.setLevel(_logging.DEBUG)
 else:
