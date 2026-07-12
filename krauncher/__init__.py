@@ -61,7 +61,7 @@ from .exceptions import (
 from .analyzer import TaskClassification
 from .data_source import DataSource
 from .KrauncherClient import KrauncherClient
-from .models import Runner, TaskHandle, TaskResult
+from .models import Runner, TaskGroup, TaskHandle, TaskResult
 from .volume import Volume
 
 __all__ = [
@@ -70,6 +70,7 @@ __all__ = [
     "Volume",
     "TaskClassification",
     "Runner",
+    "TaskGroup",
     "TaskHandle",
     "TaskResult",
     "KrauncherError",

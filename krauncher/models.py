@@ -63,6 +63,47 @@ class Runner:
 
 logger = logging.getLogger(__name__)
 
+
+@dataclass
+class TaskGroup:
+    """Shared-requirements envelope for tasks co-located on one worker.
+
+    Built by :meth:`KrauncherClient.group` from the member tasks: the VRAM
+    floor is the max over members, gpu/provider pins must not conflict, and
+    the disk envelope covers every member's data — so the worker the first
+    task provisions (Tier-1 group affinity pins without re-checking
+    requirements) satisfies the whole group.
+
+    Submit members with :meth:`submit`, or pass ``group=`` to
+    :meth:`KrauncherClient.run_code` for code blocks.
+    """
+
+    group_id: str
+    client: Any
+    vram_floor: int = 0
+    gpu_name: str | None = None
+    gpu_arch: str | None = None
+    provider: str | None = None
+    disk_gb: int = 10
+
+    async def submit(self, task: Callable, **kwargs: Any) -> "TaskHandle":
+        """Submit a ``@client.task``-decorated member with the group envelope."""
+        opts = getattr(task, "_krauncher_options", None)
+        if opts is None:
+            raise KrauncherError(
+                "group.submit() expects a @client.task-decorated function"
+            )
+        return await self.client._submit(
+            task._krauncher_code,
+            task._krauncher_entry_point,
+            kwargs,
+            func_defaults=task._krauncher_defaults,
+            classification_cache=task._krauncher_cls_cache,
+            group=self,
+            **opts,
+        )
+
+
 # Dedicated thread pool for blocking gRPC relay streams.
 # The default executor is min(32, cpu_count+4) which saturates when many
 # tasks run concurrently — queued threads can't receive key_exchange in

@@ -1,0 +1,446 @@
+"""Tutorial 52: Multi-phase training with a TaskGroup envelope.
+
+The modern flow of tutorial 17: instead of hand-picking a group_id and
+duplicating pins on every task, `client.group(phase1, phase2)` derives the
+shared-requirements envelope from the member tasks themselves — the VRAM
+floor is the max over members, pins must not conflict, and the disk
+envelope covers both members' data sources. The worker provisioned by the
+first phase therefore fits the whole group, and phase 2 reuses it warm
+(Tier-1 group affinity) together with the downloaded data.
+
+Phase 1 (warmup):
+    - Downloads tiny-imagenet-200.tar.gz (~237 MB) from S3 via Data Bridge
+    - Trains ResNet-18 for 3 epochs
+    - Saves checkpoint to /output → synced to S3
+
+Phase 2 (continue):
+    - Data is already on disk (group affinity reuse, download ≈ 0 s)
+    - Loads checkpoint from /data (saved by phase 1) or falls back to S3
+    - Trains 3 more epochs
+    - Saves final model to /output → synced to S3
+
+Features demonstrated:
+    1. TaskGroup envelope — client.group(*tasks) + group.submit(task, ...)
+    2. Data Bridge — 237 MB download from S3
+    3. Data reuse — second task skips download entirely
+    4. Output upload — checkpoint + final model → S3
+    5. Checkpoint continuity — phase 2 resumes from phase 1 weights
+    6. Real-time streaming — epoch progress via cas-relay
+
+Data preparation:
+    Download Tiny ImageNet, repack as .tar.gz, upload to your S3 bucket:
+
+        wget https://cs231n.stanford.edu/tiny-imagenet-200.zip
+        unzip tiny-imagenet-200.zip
+        tar czf tiny-imagenet-200.tar.gz tiny-imagenet-200/
+        # Upload tiny-imagenet-200.tar.gz to your S3 bucket
+"""
+
+import asyncio
+
+from krauncher import KrauncherClient
+
+client = KrauncherClient()
+
+INPUT_SOURCE = "tiny-imagenet"
+OUTPUT_SOURCE = "upload-folder"
+
+TASK_TIMEOUT = 6000  # seconds — both worker execution and client wait
+
+#filters
+VRAM_GB=4
+# Phase 2 pins higher on purpose: the group envelope must provision the
+# phase-1 worker at the group floor (ceil(17*1.1) = 19 GB) so phase 2 can
+# reuse it — the affinity check of this tutorial.
+VRAM_GB_PHASE2 = 17
+GPU_ARCH="Hopper"
+GPU_NAME="H100"
+
+# ---------------------------------------------------------------------------
+# Phase 1: Initial training
+# ---------------------------------------------------------------------------
+
+@client.task(
+    vram_gb=VRAM_GB,
+#    gpu_arch=GPU_ARCH,
+#    gpu_name=GPU_NAME,
+    timeout=TASK_TIMEOUT,
+    pip=[],  # torch, torchvision are pre-installed in cas-sandbox
+    data=INPUT_SOURCE,
+    output=OUTPUT_SOURCE,
+)
+def train_phase1(epochs: int, batch_size: int, lr: float, max_batches: int = 0):
+    """Train ResNet-18 on Tiny ImageNet for the first N epochs."""
+    import os
+    import tarfile
+    import time
+
+    import torch
+    import torch.nn as nn
+    import torchvision.transforms as T
+    from torch.utils.data import DataLoader
+    from torchvision.datasets import ImageFolder
+    from torchvision.models import resnet18
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Device: {device}")
+
+    # ── Unpack dataset if needed ──
+    data_root = "/data/tiny-imagenet-200"
+    archive = "/data/tiny-imagenet-200.tar.gz"
+    if not os.path.isdir(data_root) and os.path.isfile(archive):
+        print("Extracting dataset...")
+        t0 = time.time()
+        with tarfile.open(archive, "r:gz") as tar:
+            tar.extractall("/data")
+        print(f"Extracted in {time.time() - t0:.1f}s")
+
+    # ── Data loaders ──
+    transform = T.Compose([
+        T.RandomHorizontalFlip(),
+        T.RandomCrop(64, padding=4),
+        T.ToTensor(),
+        T.Normalize([0.4802, 0.4481, 0.3975], [0.2770, 0.2691, 0.2821]),
+    ])
+    train_ds = ImageFolder(os.path.join(data_root, "train"), transform=transform)
+    train_loader = DataLoader(
+        train_ds, batch_size=batch_size, shuffle=True,
+        num_workers=2, pin_memory=device.type == "cuda",
+    )
+    n_batches = len(train_loader) if max_batches <= 0 else min(max_batches, len(train_loader))
+    print(f"Training samples: {len(train_ds)}, batches/epoch: {n_batches}")
+
+    # ── Model ──
+    model = resnet18(num_classes=200).to(device)
+    optimizer = torch.optim.SGD(
+        model.parameters(), lr=lr, momentum=0.9, weight_decay=1e-4,
+    )
+    criterion = nn.CrossEntropyLoss()
+
+    # ── Training loop ──
+    history = []
+    for epoch in range(1, epochs + 1):
+        model.train()
+        running_loss = 0.0
+        correct = 0
+        total = 0
+        for i, (images, labels) in enumerate(train_loader, 1):
+            if i > n_batches:
+                break
+            images, labels = images.to(device), labels.to(device)
+
+            optimizer.zero_grad()
+            outputs = model(images)
+            loss = criterion(outputs, labels)
+            loss.backward()
+            optimizer.step()
+
+            running_loss += loss.item()
+            correct += (outputs.argmax(1) == labels).sum().item()
+            total += labels.size(0)
+
+            if i % 50 == 0 or i == n_batches:
+                print(
+                    f"Epoch {epoch}/{epochs}  "
+                    f"batch {i}/{n_batches}  "
+                    f"loss={running_loss / i:.4f}  "
+                    f"acc={correct / total:.3f}",
+                    flush=True,
+                )
+
+        avg_loss = running_loss / n_batches
+        accuracy = correct / total
+        history.append({"epoch": epoch, "loss": avg_loss, "accuracy": accuracy})
+        print(
+            f"Epoch {epoch}/{epochs}  "
+            f"loss={avg_loss:.4f}  acc={accuracy:.3f}",
+            flush=True,
+        )
+
+    # ── Save checkpoint to /output (synced to S3) ──
+    os.makedirs("/output", exist_ok=True)
+    ckpt = {
+        "epoch": epochs,
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "history": history,
+    }
+    ckpt_name = "checkpoint.pt"
+    torch.save(ckpt, f"/output/{ckpt_name}")
+    print(f"Checkpoint saved to /output/{ckpt_name}")
+
+    # Also save a copy in /data so phase 2 finds it after rename
+    torch.save(ckpt, f"/data/{ckpt_name}")
+    print(f"Checkpoint copied to /data/{ckpt_name}")
+
+    return {
+        "phase": 1,
+        "epochs": epochs,
+        "final_loss": round(history[-1]["loss"], 4),
+        "final_accuracy": round(history[-1]["accuracy"], 4),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: Continue training from checkpoint
+# ---------------------------------------------------------------------------
+
+@client.task(
+    vram_gb=VRAM_GB_PHASE2,
+#    gpu_arch=GPU_ARCH,
+#    gpu_name=GPU_NAME,
+    timeout=TASK_TIMEOUT,
+    pip=[],  # torch, torchvision are pre-installed in cas-sandbox
+    data=INPUT_SOURCE,
+    output=OUTPUT_SOURCE,
+)
+def train_phase2(epochs: int, batch_size: int, lr: float, max_batches: int = 0):
+    """Continue training ResNet-18 from the checkpoint left by phase 1."""
+    import os
+    import tarfile
+    import time
+
+    import torch
+    import torch.nn as nn
+    import torchvision.transforms as T
+    from torch.utils.data import DataLoader
+    from torchvision.datasets import ImageFolder
+    from torchvision.models import resnet18
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Device: {device}")
+
+    # ── Check what phase 1 left on disk ──
+    data_files = os.listdir("/data")
+    print(f"Files in /data: {data_files}")
+
+    data_root = "/data/tiny-imagenet-200"
+    archive = "/data/tiny-imagenet-200.tar.gz"
+
+    has_unpacked = os.path.isdir(data_root)
+    has_archive = os.path.isfile(archive)
+    ckpt_name = "checkpoint.pt"
+    has_checkpoint = os.path.isfile(f"/data/{ckpt_name}")
+
+    print(f"Unpacked dataset: {'found' if has_unpacked else 'NOT found'}")
+    print(f"Archive:          {'found' if has_archive else 'NOT found'}")
+    print(f"Checkpoint:       {'found' if has_checkpoint else 'NOT found'}")
+
+    if has_unpacked:
+        print("Dataset already unpacked (data reuse from phase 1)")
+    elif has_archive:
+        print("Extracting dataset (fallback)...")
+        t0 = time.time()
+        with tarfile.open(archive, "r:gz") as tar:
+            tar.extractall("/data")
+        print(f"Extracted in {time.time() - t0:.1f}s")
+    else:
+        raise RuntimeError("No dataset found in /data — phase 1 data not available")
+
+    # ── Data loaders ──
+    transform = T.Compose([
+        T.RandomHorizontalFlip(),
+        T.RandomCrop(64, padding=4),
+        T.ToTensor(),
+        T.Normalize([0.4802, 0.4481, 0.3975], [0.2770, 0.2691, 0.2821]),
+    ])
+    train_ds = ImageFolder(os.path.join(data_root, "train"), transform=transform)
+    train_loader = DataLoader(
+        train_ds, batch_size=batch_size, shuffle=True,
+        num_workers=2, pin_memory=device.type == "cuda",
+    )
+
+    # ── Model + checkpoint ──
+    model = resnet18(num_classes=200).to(device)
+    optimizer = torch.optim.SGD(
+        model.parameters(), lr=lr, momentum=0.9, weight_decay=1e-4,
+    )
+    criterion = nn.CrossEntropyLoss()
+
+    # Try to load checkpoint from /data (left by phase 1 via group reuse)
+    ckpt_path = f"/data/{ckpt_name}"
+    start_epoch = 0
+    history = []
+    if os.path.isfile(ckpt_path):
+        print(f"Loading checkpoint from disk: {ckpt_path}")
+        ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+        model.load_state_dict(ckpt["model_state_dict"])
+        optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+        start_epoch = ckpt["epoch"]
+        history = ckpt.get("history", [])
+        print(f"Resumed from epoch {start_epoch}, previous accuracy: {history[-1]['accuracy']:.3f}")
+    else:
+        print("WARNING: No checkpoint found on disk, training from scratch")
+
+    # ── Training loop (continue) ──
+    for epoch in range(start_epoch + 1, start_epoch + epochs + 1):
+        model.train()
+        running_loss = 0.0
+        correct = 0
+        total = 0
+
+        n_batches = len(train_loader) if max_batches <= 0 else min(max_batches, len(train_loader))
+        for i, (images, labels) in enumerate(train_loader, 1):
+            if i > n_batches:
+                break
+            images, labels = images.to(device), labels.to(device)
+
+            optimizer.zero_grad()
+            outputs = model(images)
+            loss = criterion(outputs, labels)
+            loss.backward()
+            optimizer.step()
+
+            running_loss += loss.item()
+            correct += (outputs.argmax(1) == labels).sum().item()
+            total += labels.size(0)
+
+            if i % 50 == 0 or i == n_batches:
+                print(
+                    f"Epoch {epoch}/{start_epoch + epochs}  "
+                    f"batch {i}/{n_batches}  "
+                    f"loss={running_loss / i:.4f}  "
+                    f"acc={correct / total:.3f}",
+                    flush=True,
+                )
+
+        avg_loss = running_loss / n_batches
+        accuracy = correct / total
+        history.append({"epoch": epoch, "loss": avg_loss, "accuracy": accuracy})
+        print(
+            f"Epoch {epoch}/{start_epoch + epochs}  "
+            f"loss={avg_loss:.4f}  acc={accuracy:.3f}",
+            flush=True,
+        )
+
+    # ── Save final model to /output ──
+    os.makedirs("/output", exist_ok=True)
+    torch.save({
+        "epoch": start_epoch + epochs,
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "history": history,
+    }, "/output/model_final.pt")
+    print("Final model saved to /output/model_final.pt")
+
+    total_epochs = start_epoch + epochs
+    return {
+        "phase": 2,
+        "resumed_from_epoch": start_epoch,
+        "total_epochs": total_epochs,
+        "final_loss": round(history[-1]["loss"], 4),
+        "final_accuracy": round(history[-1]["accuracy"], 4),
+        "initial_accuracy": round(history[0]["accuracy"], 4) if history else None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Orchestrator
+# ---------------------------------------------------------------------------
+
+def make_on_log(phase_title: str, task_id: str, input_source: str, output_source: str):
+    """Create on_log callback that prints phase header and data sources after worker ready."""
+    shown_header = [False]  # mutable flag
+
+    def on_log(msg: dict) -> None:
+        """Relay log callback — prints stdout/events in real time."""
+        t = msg.get("type")
+        d = msg.get("data", {})
+
+        # Show phase header and data sources once after worker_ready event
+        if t == "event" and d.get("name") == "worker_ready" and not shown_header[0]:
+            print()
+            print("=" * 60)
+            print(phase_title)
+            print("=" * 60)
+            print(f"Task ID: {task_id}")
+            print("-" * 60)
+            print(f"Input source:    {input_source}")
+            print(f"Output source:   {output_source}")
+            print()
+            shown_header[0] = True
+
+        if t == "stdout":
+            print(f"  {d.get('text', '').rstrip()}")
+        elif t == "metric":
+            gpu = d.get("gpu_util_pct", 0)
+            vram = d.get("vram_used_gb", 0)
+            print(f"  [gpu] {gpu:.0f}%  VRAM {vram:.1f} GB")
+
+    return on_log
+
+
+async def main():
+    if not client.api_key:
+        print("ERROR: Set CAS_API_KEY in .env (run seed_api_key.py first)")
+        return
+
+    # Build the group envelope from the member tasks: VRAM floor, shared
+    # pins and a disk envelope sized for both members' data.
+    group = await client.group(train_phase1, train_phase2)
+    print(f"Group:           {group.group_id}")
+    print(f"  VRAM floor:    {group.vram_floor} GB")
+    print(f"  Disk envelope: {group.disk_gb} GB")
+    print()
+
+    # ── Phase 1 ──
+    h1 = await group.submit(train_phase1, epochs=3, batch_size=128, lr=0.01)
+
+    on_log_phase1 = make_on_log("PHASE 1: Initial training (3 epochs)", h1.task_id, INPUT_SOURCE, OUTPUT_SOURCE)
+    r1 = await h1.wait(on_log=on_log_phase1, timeout=TASK_TIMEOUT)
+
+    print("-" * 60)
+    print(f"Phase 1 result:")
+    print(f"  Epochs:    {r1.output['epochs']}")
+    print(f"  Loss:      {r1.output['final_loss']}")
+    print(f"  Accuracy:  {r1.output['final_accuracy']}")
+    print(f"  Worker:    {r1.worker_id}  GPU: {r1.actual_gpu}")
+    print(f"  Download:  {r1.download_sec:.2f}s")
+    print(f"  Time:      {r1.execution_time_sec:.2f}s")
+    cur = r1.billing_currency
+    print(f"  Actual CU:      {r1.actual_cu:.4f}")
+    print(f"  Provider cost:  {r1.provider_cost:.6f} {cur}")
+    print(f"  Charged KU:     {r1.charged_ku:.4f}")
+    print()
+
+    # ── Phase 2 ──
+    h2 = await group.submit(train_phase2, epochs=3, batch_size=128, lr=0.005)
+
+    on_log_phase2 = make_on_log("PHASE 2: Continue training (3 more epochs)", h2.task_id, INPUT_SOURCE, OUTPUT_SOURCE)
+    r2 = await h2.wait(on_log=on_log_phase2, timeout=TASK_TIMEOUT)
+
+    print("-" * 60)
+    print(f"Phase 2 result:")
+    print(f"  Resumed from epoch: {r2.output['resumed_from_epoch']}")
+    print(f"  Total epochs:       {r2.output['total_epochs']}")
+    print(f"  Loss:               {r2.output['final_loss']}")
+    print(f"  Accuracy:           {r2.output['final_accuracy']}")
+    print(f"  Worker:             {r2.worker_id}  GPU: {r2.actual_gpu}")
+    print(f"  Download:           {r2.download_sec:.2f}s")
+    print(f"  Time:               {r2.execution_time_sec:.2f}s")
+    cur = r2.billing_currency
+    print(f"  Actual CU:          {r2.actual_cu:.4f}")
+    print(f"  Provider cost:      {r2.provider_cost:.6f} {cur}")
+    print(f"  Charged KU:         {r2.charged_ku:.4f}")
+    print()
+
+    # ── Summary ──
+    print("=" * 60)
+    print("SUMMARY")
+    print("=" * 60)
+    same = r1.worker_id == r2.worker_id
+    print(f"  Host affinity:    {'confirmed' if same else 'FAILED'} ({r1.worker_id})")
+    print(f"  Data reuse:       phase1 download={r1.download_sec:.2f}s, "
+          f"phase2 download={r2.download_sec:.2f}s")
+    savings = r1.download_sec - r2.download_sec
+    if savings > 0:
+        print(f"  Time saved:       {savings:.2f}s (data reuse)")
+    print(f"  Accuracy:         {r1.output['final_accuracy']} → {r2.output['final_accuracy']} "
+          f"(+{r2.output['final_accuracy'] - r1.output['final_accuracy']:.4f})")
+    print(f"  Total CU:         {r1.actual_cu + r2.actual_cu:.4f}")
+    print()
+    print("Checkpoint and final model are in your S3 output bucket.")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

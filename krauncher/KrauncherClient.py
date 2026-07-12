@@ -24,7 +24,7 @@ from .analyzer import (
 )
 from .data_source import DataSource
 from .exceptions import KrauncherError, ValueTransferError
-from .models import Runner, TaskHandle, _check_response
+from .models import Runner, TaskGroup, TaskHandle, _check_response
 from .serializer import serialize_function
 from .volume import Volume
 
@@ -296,7 +296,10 @@ class KrauncherClient:
         excluded because they don't affect training iteration count.
         Returns None if no data/volume specified or on any error (best-effort).
         """
-        names = [n for n in (data, volume) if n is not None]
+        return await self._resolve_sizes([n for n in (data, volume) if n is not None])
+
+    async def _resolve_sizes(self, names: list[str]) -> float | None:
+        """Total size (MB) of registered data sources / volumes, best-effort."""
         if not names:
             return None
         try:
@@ -408,15 +411,90 @@ class KrauncherClient:
                     stream_stderr=stream_stderr,
                 )
 
-            # Store metadata for introspection
+            # Store metadata for introspection and group envelopes
             wrapper._krauncher_code = code_string
             wrapper._krauncher_entry_point = entry_point
             wrapper._krauncher_pip = pip or []
             wrapper._krauncher_provider = provider
+            wrapper._krauncher_defaults = _func_defaults
+            wrapper._krauncher_cls_cache = _cached_classification
+            # Full decorator options, keyed exactly as _submit() parameters —
+            # group.submit() forwards them verbatim.
+            wrapper._krauncher_options = {
+                "vram_gb": vram_gb, "gpu_arch": gpu_arch, "gpu_name": gpu_name,
+                "pip": pip, "timeout": timeout, "priority": priority,
+                "data_urls": data_urls, "data": data, "output": output,
+                "volume": volume, "provider": provider, "disk_gb": disk_gb,
+                "dataset_size": dataset_size, "stream_stderr": stream_stderr,
+            }
 
             return wrapper
 
         return decorator
+
+    async def group(self, *tasks: Callable, name: str | None = None) -> TaskGroup:
+        """Build a :class:`TaskGroup` — a shared-requirements envelope for
+        tasks that should share one warm worker (Tier-1 group affinity).
+
+        Classifies each member's code (analysis phase only, nothing is
+        submitted) and derives what the group's worker must satisfy:
+
+        - VRAM floor = max over members (explicit ``vram_gb`` pins get the
+          usual 10% headroom, unpinned members are classified);
+        - ``gpu_name`` / ``gpu_arch`` / ``provider`` — shared; conflicting
+          explicit pins raise immediately;
+        - disk envelope = max member ``disk_gb`` + total size of all members'
+          data sources / volumes, so the group's data fits the host.
+
+        Submit members with ``await group.submit(task, **kwargs)`` or pass
+        ``group=group`` to :meth:`run_code`.
+        """
+        import math
+        import uuid as _uuid
+
+        if not tasks:
+            raise KrauncherError("client.group() needs at least one @client.task function")
+        vram_floor = 0
+        pins: dict[str, set] = {"gpu_name": set(), "gpu_arch": set(), "provider": set()}
+        data_names: set[str] = set()
+        disk_gb = 0
+        for t in tasks:
+            opts = getattr(t, "_krauncher_options", None)
+            if opts is None:
+                raise KrauncherError(
+                    "client.group() expects @client.task-decorated functions"
+                )
+            if opts["vram_gb"] is not None:
+                vram = classify_explicit(opts["vram_gb"]).min_vram_gb
+            else:
+                cls = await self._classify(t._krauncher_code, t._krauncher_defaults or {})
+                vram = cls.min_vram_gb
+            vram_floor = max(vram_floor, vram)
+            for key, bag in pins.items():
+                if opts.get(key):
+                    bag.add(opts[key])
+            for key in ("data", "volume"):
+                if opts.get(key):
+                    data_names.add(opts[key])
+            disk_gb = max(disk_gb, opts.get("disk_gb") or 0)
+        for key, bag in pins.items():
+            if len(bag) > 1:
+                raise KrauncherError(
+                    f"group members pin different {key}: {sorted(bag)} — "
+                    f"a group shares one worker"
+                )
+        total_mb = await self._resolve_sizes(sorted(data_names))
+        if total_mb:
+            disk_gb += math.ceil(total_mb / 1024)
+        return TaskGroup(
+            group_id=name or f"kr-{_uuid.uuid4().hex[:8]}",
+            client=self,
+            vram_floor=vram_floor,
+            gpu_name=next(iter(pins["gpu_name"]), None),
+            gpu_arch=next(iter(pins["gpu_arch"]), None),
+            provider=next(iter(pins["provider"]), None),
+            disk_gb=disk_gb or 10,
+        )
 
     async def _submit(
         self,
@@ -427,6 +505,7 @@ class KrauncherClient:
         func_defaults: dict[str, Any] | None = None,
         classification_cache: list | None = None,
         classification: TaskClassification | None = None,
+        group: TaskGroup | None = None,
         vram_gb: int | None = None,
         gpu_arch: str | None = None,
         gpu_name: str | None = None,
@@ -461,6 +540,25 @@ class KrauncherClient:
                 dataset_size=dataset_size,
                 classification_cache=classification_cache,
             )
+
+        if group is not None:
+            # Group envelope: the shared worker was sized for the whole group
+            # — raise this task to the group's floor, inherit unset pins.
+            if group.vram_floor and classification.min_vram_gb < group.vram_floor:
+                import dataclasses
+                from .analyzer import _vram_to_tier
+                classification = dataclasses.replace(classification)
+                classification.min_vram_gb = group.vram_floor
+                classification.tier = _vram_to_tier(group.vram_floor)
+            if group_id is None:
+                group_id = group.group_id
+            if gpu_name is None and group.gpu_name:
+                gpu_name = group.gpu_name
+            if gpu_arch is None and group.gpu_arch:
+                gpu_arch = group.gpu_arch
+            if provider is None and group.provider:
+                provider = group.provider
+            disk_gb = max(disk_gb, group.disk_gb)
 
         if self.estimate_only:
             c = classification
@@ -741,7 +839,9 @@ class KrauncherClient:
             **task_options: Same options as :meth:`task` (``pip``, ``timeout``,
                 ``vram_gb``, ``gpu_name``, ``volume``, ...), plus
                 ``classification=`` — a precomputed :class:`TaskClassification`
-                from :meth:`estimate_code`; skips the analysis phase.
+                from :meth:`estimate_code` (skips the analysis phase) — and
+                ``group=`` — a :class:`TaskGroup` from :meth:`group` for
+                warm-worker co-location.
 
         Returns:
             A :class:`TaskHandle`; ``result.output`` is the outputs dict.
