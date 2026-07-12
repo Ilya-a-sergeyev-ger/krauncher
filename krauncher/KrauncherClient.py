@@ -15,6 +15,7 @@ _logger = logging.getLogger("krauncher")
 
 import httpx
 
+from . import _inflight
 from .analyzer import (
     AnalyzerClient,
     TaskClassification,
@@ -693,7 +694,7 @@ class KrauncherClient:
                 return resp.json()["task_id"]
 
         task_id = await _post_task()
-        return TaskHandle(
+        handle = TaskHandle(
             task_id=task_id,
             client=client,
             ek_priv=ek_priv,
@@ -704,6 +705,8 @@ class KrauncherClient:
             resubmit=_post_task,
             stream_stderr=effective_stream_stderr,
         )
+        _inflight.register(handle)
+        return handle
 
 
     async def run_code(

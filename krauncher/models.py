@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 import httpx
 
+from . import _inflight
 from .exceptions import AuthError, E2EIdentityMismatch, InsufficientBalanceError, KrauncherError, NoCapacityError, PayloadDeliveryError, RemoteTimeout, TaskError, TaskTimeout
 
 if TYPE_CHECKING:
@@ -665,6 +666,8 @@ class TaskHandle:
         if info:
             self._cancel_via_relay(info)
 
+        _inflight.unregister(self)
+
     def _cancel_via_relay(self, info: dict) -> None:
         """Best-effort synchronous relay CancelTask to stop an executing worker."""
         try:
@@ -702,7 +705,9 @@ class TaskHandle:
         """Wait for terminal status; on abandonment before terminal (Ctrl-C,
         timeout, exception) cancel the task remotely so its hold is released."""
         try:
-            return await self._wait_impl(timeout=timeout, on_log=on_log)
+            result = await self._wait_impl(timeout=timeout, on_log=on_log)
+            _inflight.unregister(self)
+            return result
         except (asyncio.CancelledError, KeyboardInterrupt, Exception):
             # Exited without a terminal result → the caller abandoned the task.
             # Tell the broker so the prepaid hold is freed instead of leaking.
