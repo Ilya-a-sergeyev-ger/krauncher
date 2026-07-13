@@ -183,6 +183,20 @@ For larger or registered datasets, use the **data bridge** (`data_urls=` /
 
 ---
 
+## Beyond a single function
+
+- **Notebook / editor cells.** `await client.run_code(code, inputs={...},
+  outputs=[...])` runs a code *string* instead of a decorated function: named
+  local values go in, named variables come back (JSON-safe, 16 MB budget). This
+  is the primitive the `krauncher-jupyter` `%%krauncher` magic is built on. See
+  [tutorial/50](tutorial/50_run_code_values.py).
+- **Multi-phase runs.** `group = await client.group(task_a, task_b)` derives a
+  shared-requirements envelope (VRAM floor, GPU pins, disk) from the tasks and
+  keeps them on one warm worker; submit with `await group.submit(task, ...)`.
+  See [tutorial/52](tutorial/52_group_envelope.py).
+
+---
+
 ## Inspecting a finished task
 
 After a task completes, the broker keeps a structured record — the same one
@@ -230,6 +244,9 @@ Numbered, runnable tutorials in [`tutorial/`](tutorial/):
 | 22  | `22_qwen25_7b_inference_gsm8k.py` | Qwen2.5-7B inference                           |
 | 23  | `23_gnn_node_classification_cora.py` | GCN node classification                    |
 | 30+ | `30_…`–`36_…`                     | LLM inference and batched inference           |
+| 50  | `50_run_code_values.py`           | `run_code` with named in/out values           |
+| 52  | `52_group_envelope.py`            | `client.group()` multi-phase envelope         |
+| 53  | `53_hf_native.py`                 | HuggingFace-native auto pre-fetch             |
 
 ---
 

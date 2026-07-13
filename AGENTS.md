@@ -131,6 +131,92 @@ total_charged_local: float  billing_currency: str
 
 ---
 
+## Running a code block — `run_code` (values API)
+
+`@client.task` wraps a *function*. `run_code` runs a *code string* (a notebook
+cell, an editor selection) — the primitive notebook/editor adapters build on.
+Named local values ride in as inputs; named variables from the block's
+namespace come back as outputs, through the relay's encrypted result mailbox.
+
+```python
+handle = await client.run_code(
+    code,                       # source executed as-is on the worker
+    inputs={"epochs": 3, "batch_size": 32},   # injected as the block's variables
+    outputs=["losses", "accuracy"],           # collected from its namespace → result.output
+    lenient_outputs=True,       # drop unset / non-JSON-safe names instead of failing
+    pip=["torch"], timeout=300, # any @client.task option also applies
+)
+result = await handle
+losses = result.output["losses"]              # or krauncher.values.decode_outputs(...)
+```
+
+- `inputs` / `outputs` values must be **JSON-safe** and fit the **16 MB inline
+  budget** shared with the code (`krauncher.values.INLINE_BUDGET_BYTES`); larger
+  data goes through a `volume=` / `data=` source. Numeric inputs stay visible to
+  the analyzer's CU estimate — don't wrap them.
+- Auto-detect the transfer set with `krauncher.codeblock.analyze_names(code)` →
+  `(free_vars, assigned_names)`; free variables are inputs, assigned names are
+  outputs. This is exactly what the `%%krauncher` magic uses.
+- Extra `task_options`: `classification=` — a precomputed `TaskClassification`
+  (skips analysis), and `group=` — a `TaskGroup` for warm-worker co-location.
+
+`client.estimate_code(code, *, inputs=, outputs=, lenient_outputs=, vram_gb=,
+data=, volume=, dataset_size=)` → `TaskClassification`: classify the exact
+source `run_code` would submit, **without** running it. Pass the result to
+`run_code(..., classification=...)` to execute without a second analysis.
+
+### HuggingFace-native pre-fetch
+
+Literal `load_dataset("org/name")` / `from_pretrained("org/name")` references in
+a block are detected (`krauncher.hf.detect_hf_refs`) and sized
+(`hf.hf_size_mb`) so the quote is honest, then pre-fetched into the worker's HF
+cache **before the container starts** — the unmodified call finds them via
+`HF_HOME`, with no `data_urls=` needed. Only *literal* refs are pre-fetched;
+f-string / variable refs download inside execution.
+
+---
+
+## Task groups — `client.group()`
+
+A `TaskGroup` is a shared-requirements envelope derived from the member tasks
+themselves — for a sequence that should share one warm worker (Tier-1 group
+affinity), replacing hand-picked `group_id` strings duplicated on every task.
+
+```python
+group = await client.group(train_phase1, train_phase2)   # analysis only, nothing submitted
+h1 = await group.submit(train_phase1, epochs=3)           # or run_code(..., group=group)
+r1 = await h1.wait()
+h2 = await group.submit(train_phase2, epochs=3)           # reuses phase-1 worker warm
+```
+
+The envelope is: VRAM floor = max over members (explicit `vram_gb` pins get the
+usual 10% headroom); `gpu_name` / `gpu_arch` / `provider` shared — **conflicting
+explicit pins raise**; disk = max member `disk_gb` + total size of all members'
+data sources / volumes. Fields: `group.group_id`, `group.vram_floor`,
+`group.disk_gb`. Tutorial 52.
+
+---
+
+## Volumes & registered data sources
+
+Handles created off the client; see the `volume=` / `data=` / `output=` task
+params for how a task mounts them.
+
+```python
+vol = client.volume("my-vol", size_gb=5)   # ensure exists → Volume handle
+vol.upload("local/dir", "dest"); vol.ls("prefix"); vol.download("remote", "local"); vol.info()
+
+src = client.data_source("my-data", urls=["s3://bucket/key"], size_gb=2)  # register
+out = client.data_source("out", urls=["s3://bucket/out"], is_output=True) # upload target
+src.info(); src.delete()
+```
+
+`client.list_runners(print_table=True)` → `list[Runner]` — current fleet
+(`GET /admin/fleet`), grouped by provider; prints a table by default (handy in
+notebooks).
+
+---
+
 ## Inspecting a finished task
 
 ```python
@@ -226,4 +312,6 @@ Start at `01_remote_simple.py`. Then by topic: deps `02`, errors `03`, timeout
 `04`, groups `05`/`17`, data bridge `06`/`15`/`19`, live logs `09`, progress
 `10`, E2E `11`, helper functions `12`, classification on real ML code `13`,
 vision training `18`, BERT/IMDB `20`, LoRA `21`, inference `22`/`30`–`34`,
-batched inference `35`/`36`.
+batched inference `35`/`36`. Values / adapters primitives: `run_code` with
+named in/out values `50`, `client.group()` envelope `52`, HuggingFace-native
+auto pre-fetch `53`.
