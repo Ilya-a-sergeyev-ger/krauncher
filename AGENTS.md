@@ -58,7 +58,7 @@ env vars / a `.env` file in CWD.
 | Constructor arg     | Env var                | Default                  | Meaning                                   |
 |---------------------|------------------------|--------------------------|-------------------------------------------|
 | `api_key`           | `CAS_API_KEY`          | — (required)             | API key (`cas_...`)                       |
-| `broker_url`        | `CAS_BROKER_URL`       | `https://krauncher.com`  | Broker base URL                           |
+| `broker_url`        | `CAS_BROKER_URL`       | `https://krauncher.com/api` | Broker base URL                        |
 | `encrypt`           | `CAS_ENCRYPT`          | `true`                   | E2E-encrypt code/args                     |
 | `encrypt_analyzer`  | `CAS_ENCRYPT_ANALYZER` | `true`                   | E2E-encrypt code sent to the analyzer     |
 | `analyzer_timeout`  | `CAS_ANALYZER_TIMEOUT` | `10.0`                   | Analyzer call timeout (s)                 |
