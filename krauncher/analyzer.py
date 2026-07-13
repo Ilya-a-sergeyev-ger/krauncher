@@ -123,6 +123,13 @@ class TaskClassification:
 # Tier mapping
 # ---------------------------------------------------------------------------
 
+# VRAM safety headroom applied to every requirement before GPU selection, so a
+# task is never scheduled onto a card it only just fits (real cards deliver
+# below their nominal VRAM, and the estimate itself carries uncertainty). Same
+# factor on both the explicit pin and the analyzer's auto-classified estimate.
+_VRAM_HEADROOM = 1.1
+
+
 def _vram_to_tier(vram_gb: int) -> str:
     if vram_gb == 0:
         return "no_gpu"
@@ -137,8 +144,8 @@ def _vram_to_tier(vram_gb: int) -> str:
 # ---------------------------------------------------------------------------
 
 def classify_explicit(vram_gb: int) -> TaskClassification:
-    """Level 1: user explicitly set vram_gb. Add 10% headroom."""
-    effective = math.ceil(vram_gb * 1.1)
+    """Level 1: user explicitly set vram_gb. Add safety headroom."""
+    effective = math.ceil(vram_gb * _VRAM_HEADROOM)
     return TaskClassification(
         min_vram_gb=effective,
         tier=_vram_to_tier(effective),
@@ -286,7 +293,10 @@ class AnalyzerClient:
         hw = result.get("min_hardware", {})
         dur = result.get("duration_estimate")
 
-        min_vram_gb = hw.get("min_vram_gb", 24)
+        raw_vram_gb = hw.get("min_vram_gb", 24)
+        # Same safety headroom as the explicit path (classify_explicit); 0 = CPU
+        # task stays 0.
+        min_vram_gb = math.ceil(raw_vram_gb * _VRAM_HEADROOM)
         method = hw.get("analysis_method", "ast")
         confidence = hw.get("confidence", 0.6)
 
