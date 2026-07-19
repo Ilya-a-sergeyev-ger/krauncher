@@ -869,7 +869,7 @@ class TaskHandle:
                     if event_data.get("pcie_gbps"):
                         spec_parts.append(f"PCIe {event_data['pcie_gbps']:.1f} GB/s")
                     if event_data.get("network_mbps"):
-                        spec_parts.append(f"net {event_data['network_mbps']:.0f} Mbps")
+                        spec_parts.append(f"net {event_data['network_mbps']:.0f} MB/s")
                     specs = ", ".join(spec_parts)
                     hw_str = self._initial_hw or ""
                     logger.info("Executing on %s: %s%s", worker_id, hw_str, f", {specs}" if specs else "")
@@ -956,7 +956,7 @@ class TaskHandle:
                         if ws.get("pcie_gbps"):
                             spec_parts.append(f"PCIe {ws['pcie_gbps']:.1f} GB/s")
                         if ws.get("network_mbps"):
-                            spec_parts.append(f"net {ws['network_mbps']:.0f} Mbps")
+                            spec_parts.append(f"net {ws['network_mbps']:.0f} MB/s")
                         specs = ", ".join(spec_parts)
                         worker_id = data.get("worker_id", "")
                         logger.info(
