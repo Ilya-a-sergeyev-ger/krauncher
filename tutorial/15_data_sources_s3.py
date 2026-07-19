@@ -131,17 +131,6 @@ async def main():
     for sector, count in output["top_sectors"].items():
         print(f"    {sector}: {count}")
 
-    # Timing breakdown
-    exec_sec = result.execution_time_sec - result.download_sec - result.pip_install_sec
-    print(f"\nTiming:")
-    print(f"  Queue wait: {result.queue_wait_sec:.2f}s")
-    print(f"  Download:   {result.download_sec:.2f}s")
-    print(f"  Execution:  {exec_sec:.2f}s")
-    print(f"  Total:      {result.execution_time_sec:.2f}s")
-    cur = result.billing_currency
-    print(f"  Actual CU:    {result.actual_cu:.4f}")
-    print(f"  Provider cost: {result.provider_cost:.6f} {cur}")
-    print(f"  Charged KU:   {result.charged_ku:.4f}")
 
     print("\nOutput files were synced to the output data source.")
     print("Check your S3 bucket or the Web UI to see sector_summary.json and sector_counts.csv.")

@@ -38,14 +38,6 @@ async def main():
     result = await handle
     print(f"Output: {result.output}")
 
-    # Timing breakdown
-    print(f"\nTiming Breakdown:")
-    print(f"  Queue wait:   {result.queue_wait_sec:.2f}s")
-    print(f"  Pip install:  {result.pip_install_sec:.2f}s")
-    exec_sec = result.execution_time_sec - result.pip_install_sec - result.download_sec
-    print(f"  Execution:    {exec_sec:.2f}s")
-    print(f"  Total:        {result.execution_time_sec:.2f}s")
-
 
 if __name__ == "__main__":
     asyncio.run(main())

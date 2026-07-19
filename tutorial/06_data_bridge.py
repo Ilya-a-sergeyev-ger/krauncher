@@ -93,17 +93,6 @@ async def main():
     for sector, count in output["top_sectors"].items():
         print(f"  {sector}: {count}")
 
-    # Timing breakdown
-    exec_sec = result.execution_time_sec - result.download_sec - result.pip_install_sec
-    print(f"\nTiming Breakdown:")
-    print(f"  Queue wait:   {result.queue_wait_sec:.2f}s")
-    print(f"  Download:     {result.download_sec:.2f}s")
-    print(f"  Execution:    {exec_sec:.2f}s")
-    print(f"  Total:        {result.execution_time_sec:.2f}s")
-    cur = result.billing_currency
-    print(f"  Actual CU:    {result.actual_cu:.4f}")
-    print(f"  Provider cost: {result.provider_cost:.6f} {cur}")
-    print(f"  Charged KU:   {result.charged_ku:.4f}")
 
     # Verify data was actually loaded
     assert output["total_rows"] > 1000, f"Expected >1000 rows, got {output['total_rows']}"

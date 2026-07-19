@@ -135,16 +135,6 @@ async def main():
     print(f"  Epochs:        {output['epochs']}")
     print(f"  Accuracy:      {output['accuracy']:.4f}")
 
-    exec_sec = result.execution_time_sec - result.download_sec - result.pip_install_sec
-    print(f"\nTiming Breakdown:")
-    print(f"  Queue wait:   {result.queue_wait_sec:.2f}s")
-    print(f"  HF Download:  {result.download_sec:.2f}s")
-    print(f"  Pip install:  {result.pip_install_sec:.2f}s")
-    print(f"  Training:     {exec_sec:.2f}s")
-    print(f"  Total:        {result.execution_time_sec:.2f}s")
-    print(f"  Actual CU:    {result.actual_cu:.4f}")
-    print(f"  Charged KU:   {result.charged_ku:.4f}")
-
     assert output["accuracy"] > 0.95, f"Expected >95% accuracy, got {output['accuracy']:.2%}"
     print("\nAll assertions passed!")
 

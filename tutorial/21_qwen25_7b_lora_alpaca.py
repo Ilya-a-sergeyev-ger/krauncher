@@ -228,17 +228,6 @@ async def main():
     print(f"  Train loss:       {output['train_loss']}")
     print(f"  Train runtime:    {output['train_runtime_sec']}s")
 
-    dl_sec = result.download_sec
-    exec_sec = result.execution_time_sec - dl_sec - result.pip_install_sec
-    print(f"\nTiming Breakdown:")
-    print(f"  Queue wait:       {result.queue_wait_sec:.2f}s")
-    print(f"  HF Download:      {dl_sec:.2f}s")
-    print(f"  Pip install:      {result.pip_install_sec:.2f}s")
-    print(f"  Training:         {exec_sec:.2f}s")
-    print(f"  Total:            {result.execution_time_sec:.2f}s")
-    print(f"  Actual CU:        {result.actual_cu:.4f}")
-    print(f"  Charged KU:       {result.charged_ku:.4f}")
-
 
 if __name__ == "__main__":
     asyncio.run(main())
