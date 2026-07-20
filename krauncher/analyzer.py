@@ -183,12 +183,16 @@ class AnalyzerClient:
         poll_interval: float = 0.5,
         token: str | None = None,
         store_code: bool = False,
+        user_id: str | None = None,
+        llm_backend: str | None = None,
     ) -> None:
         self._url = analyzer_url.rstrip("/")
         self._encrypt = encrypt
         self._timeout = timeout
         self._poll_interval = poll_interval
         self._store_code = store_code
+        self._user_id = user_id
+        self._llm_backend = llm_backend
         self._analyzer_pubkey: bytes | None = None
         self._headers: dict[str, str] = (
             {"X-Analyzer-Token": token} if token else {}
@@ -233,7 +237,12 @@ class AnalyzerClient:
 
         async with httpx.AsyncClient(timeout=self._timeout, headers=self._headers) as session:
             # Build request body
-            body: dict = {"store_code": self._store_code, "source": "api"}
+            body: dict = {
+                "store_code": self._store_code,
+                "source": "api",
+                "user_id": self._user_id,
+                "llm_backend": self._llm_backend,
+            }
             if dataset_mb is not None:
                 body["dataset_mb"] = dataset_mb
             if kwargs:
