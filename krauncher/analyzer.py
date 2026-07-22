@@ -334,15 +334,11 @@ class AnalyzerClient:
             seq_len_val = dur.get("seq_len")
             input_tokens_val = dur.get("input_tokens")
 
-        # Universal pass-through: forward any duration_estimate field not already
-        # mapped to a typed attribute (cu_prefill/cu_decode and future metadata).
-        _mapped = {
-            "compute_units", "cu_compute", "cu_io", "cu_setup", "predicted_sec",
-            "model_download_mb", "dataset_mb", "confidence", "findings",
-            "epochs_bucket", "samples_bucket", "seq_len", "input_tokens",
-            "basis", "detected_iterations",
-        }
-        extra_debug = {k: v for k, v in (dur or {}).items() if k not in _mapped and v is not None}
+        # Agnostic pass-through: forward every analyzer field. Keys already emitted
+        # as typed attributes are dropped by to_dict()'s `k not in d` guard, so new
+        # analyzer signals (dataloader_num_workers, ...) need no client change.
+        extra_debug = {k: v for k, v in (dur or {}).items() if v is not None}
+        extra_debug.update({k: v for k, v in hw.items() if v is not None})
 
         return TaskClassification(
             min_vram_gb=min_vram_gb,
