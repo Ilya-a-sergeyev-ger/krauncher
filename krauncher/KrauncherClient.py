@@ -271,14 +271,12 @@ class KrauncherClient:
         url = self._get_analyzer_url()  # raises on missing
         config = self._get_broker_config()
         token = config.get("analyzer_token")
-        store_code = bool(config.get("store_code", False))
         # Analyzer choice: absent on an older broker means "off" — never assume
         # consent to send code to an external analyzer.
         llm_backend = config.get("llm_analyzer") or "off"
         user_id = config.get("user_id")
         # Re-create client if URL changed
         if self._analyzer_client is not None and self._analyzer_client._url == url.rstrip("/"):
-            self._analyzer_client._store_code = store_code
             self._analyzer_client._llm_backend = llm_backend
             self._analyzer_client._user_id = user_id
             return self._analyzer_client
@@ -287,7 +285,6 @@ class KrauncherClient:
             encrypt=self._encrypt_analyzer,
             timeout=self._analyzer_timeout,
             token=token,
-            store_code=store_code,
             user_id=user_id,
             llm_backend=llm_backend,
         )
