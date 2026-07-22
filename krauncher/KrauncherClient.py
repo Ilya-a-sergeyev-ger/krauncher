@@ -121,7 +121,6 @@ class KrauncherClient:
     ================ ====================== ==========================================
     api_key          CAS_API_KEY            (required)
     broker_url       CAS_BROKER_URL         https://krauncher.com/api
-    encrypt          CAS_ENCRYPT            true
     encrypt_analyzer CAS_ENCRYPT_ANALYZER   true
     analyzer_timeout CAS_ANALYZER_TIMEOUT   10.0
     gpu_name         KRAUNCHER_GPU_NAME     ""
@@ -154,7 +153,6 @@ class KrauncherClient:
         self,
         api_key: str | None = None,
         broker_url: str | None = None,
-        encrypt: bool | None = None,
         analyzer_url: Any = _UNSET,
         encrypt_analyzer: bool | None = None,
         analyzer_timeout: float | None = None,
@@ -172,10 +170,9 @@ class KrauncherClient:
             )
         self.broker_url = (broker_url or os.environ.get("CAS_BROKER_URL", "https://krauncher.com/api")).rstrip("/")
 
-        if encrypt is not None:
-            self.encrypt = encrypt
-        else:
-            self.encrypt = os.environ.get("CAS_ENCRYPT", "true").lower() not in ("0", "false", "no")
+        # Task E2E encryption is mandatory — the broker rejects plaintext
+        # submissions. There is no opt-out. (encrypt_analyzer below is a
+        # separate, still-optional path: the /estimate analyzer call.)
 
         # analyzer_url is resolved exclusively from the broker (/v1/me).
         # The constructor parameter is kept only for tests / edge cases.
@@ -735,27 +732,20 @@ class KrauncherClient:
         if provider is not None:
             requirements["provider_name"] = provider
 
-        # E2E encryption: generate ephemeral keypair, withhold plaintext code
-        ek_priv = None
-        if client.encrypt:
-            import base64
-            from .crypto import generate_keypair
-            ek_priv, ek_pub_bytes = generate_keypair()
-            ek_pub_b64 = base64.urlsafe_b64encode(ek_pub_bytes).decode().rstrip("=")
-            payload_body: dict[str, Any] = {
-                "code_string": "",
-                "entry_point": entry_point,
-                "args": {},
-                "pip": pip or [],
-                "encryption_key": ek_pub_b64,
-            }
-        else:
-            payload_body = {
-                "code_string": code_string,
-                "entry_point": entry_point,
-                "args": merged_kwargs,
-                "pip": pip or [],
-            }
+        # E2E encryption (mandatory): generate an ephemeral keypair and withhold
+        # the plaintext code+args from the broker — they are uploaded encrypted
+        # to the worker via the relay.
+        import base64
+        from .crypto import generate_keypair
+        ek_priv, ek_pub_bytes = generate_keypair()
+        ek_pub_b64 = base64.urlsafe_b64encode(ek_pub_bytes).decode().rstrip("=")
+        payload_body: dict[str, Any] = {
+            "code_string": "",
+            "entry_point": entry_point,
+            "args": {},
+            "pip": pip or [],
+            "encryption_key": ek_pub_b64,
+        }
 
         effective_stream_stderr = (
             stream_stderr if stream_stderr is not None else client.stream_stderr
@@ -801,8 +791,8 @@ class KrauncherClient:
             task_id=task_id,
             client=client,
             ek_priv=ek_priv,
-            plaintext_code=code_string if client.encrypt else None,
-            plaintext_args=kwargs if client.encrypt else None,
+            plaintext_code=code_string,
+            plaintext_args=kwargs,
             classification=classification,
             submit_start=submit_start,
             resubmit=_post_task,

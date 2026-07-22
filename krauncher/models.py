@@ -652,7 +652,7 @@ class TaskHandle:
         self._pending_download_event: dict | None = None  # buffered download_started
         self._submit_start: float | None = submit_start
         self._waiting_start: float | None = None  # time when "Waiting for worker" was logged
-        # E2E fields — set when client.encrypt=True
+        # E2E fields (E2E is mandatory)
         self._ek_priv = ek_priv
         self._plaintext_code = plaintext_code
         self._plaintext_args = plaintext_args
@@ -769,8 +769,8 @@ class TaskHandle:
         subscription to the relay is opened.  Each relay message (stdout,
         stderr, event, metric) is passed to ``on_log`` in real time.
 
-        In E2E mode (client.encrypt=True), the relay stream is used to perform
-        the key exchange and deliver the encrypted task payload to the worker.
+        E2E is always on: the relay stream is used to perform the key exchange
+        and deliver the encrypted task payload to the worker.
         Relay messages are transparently decrypted before being passed to on_log.
         When E2E is active, wait() automatically opens the relay stream even if
         on_log is not provided (needed to deliver the payload).
