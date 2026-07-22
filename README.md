@@ -151,7 +151,7 @@ it doesn't have the keys.
 | Job timing and GPU type    | Yes                  |
 
 This isn't a feature we added. It's a consequence of not wanting to be in
-the data custody business. E2E encryption is on by default (`CAS_ENCRYPT=true`).
+the data custody business. E2E encryption is mandatory — there is no opt-out.
 
 ---
 
