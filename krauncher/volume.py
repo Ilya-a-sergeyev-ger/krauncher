@@ -164,6 +164,39 @@ class Volume:
                     for chunk in dl.iter_bytes(chunk_size=8192):
                         f.write(chunk)
 
+    def download_dir(self, prefix: str = "", local_dir: str = ".") -> int:
+        """Download every file under *prefix* into *local_dir*, keeping layout.
+
+        The mirror of :meth:`upload` for a directory: where ``upload(src,
+        dest)`` writes ``dest/<relative path>``, this reads them back under
+        *local_dir* with the same relative paths. Retrieving what a task
+        produced is one call rather than :meth:`ls` plus a loop.
+
+        *prefix* is matched as a directory, not as a string prefix — a volume
+        holding ``out/a.png`` and ``output.txt`` yields only the first for
+        ``prefix="out"``.
+
+        Args:
+            prefix: Directory inside the volume. Empty = the whole volume.
+            local_dir: Local destination directory; created if absent.
+
+        Returns:
+            Number of files downloaded.
+        """
+        prefix = prefix.strip("/")
+        marker = f"{prefix}/" if prefix else ""
+        dest_root = Path(local_dir)
+
+        count = 0
+        for entry in self.ls(marker):
+            key = entry.get("key", "")
+            rel = key[len(marker):]
+            if not rel or key.endswith("/"):  # the directory placeholder itself
+                continue
+            self.download(key, str(dest_root / rel))
+            count += 1
+        return count
+
     def delete(self) -> None:
         """Delete this volume and all its data."""
         with httpx.Client(timeout=30.0) as session:
