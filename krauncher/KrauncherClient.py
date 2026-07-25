@@ -378,9 +378,11 @@ class KrauncherClient:
             dataset_size: Dataset size in MB for CU estimation.  Overrides
                 auto-resolved size from data sources.
             artifacts: Return the files the task writes beside itself, in its
-                working directory (``result.files`` / ``result.download()``).
-                They share the result's inline size budget — for anything large
-                use a volume instead.
+                working directory, which is also its ``HOME``
+                (``result.files`` / ``result.download()``).  Hidden files and
+                directories are skipped — they are caches libraries drop in
+                ``~``, not task output.  Artifacts share the result's inline
+                size budget; for anything large use a volume instead.
         """
 
         client = self
