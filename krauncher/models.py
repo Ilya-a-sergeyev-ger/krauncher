@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Callable
 import httpx
 
 from . import _inflight
-from .exceptions import AuthError, E2EIdentityMismatch, InsufficientBalanceError, KrauncherError, NoCapacityError, PayloadDeliveryError, RemoteTimeout, TaskError, TaskTimeout
+from .exceptions import AuthError, E2EIdentityMismatch, InsufficientBalanceError, KrauncherError, NoCapacityError, PayloadDeliveryError, RemoteTimeout, TaskError, TaskTimeout, ValueTransferError
 
 if TYPE_CHECKING:
     from .KrauncherClient import KrauncherClient
@@ -93,6 +93,9 @@ class TaskGroup:
             raise KrauncherError(
                 "group.submit() expects a @client.task-decorated function"
             )
+        # files= is the call-time channel for sending files, not a task
+        # argument — same as the decorated wrapper does.
+        files = kwargs.pop("files", None)
         return await self.client._submit(
             task._krauncher_code,
             task._krauncher_entry_point,
@@ -100,6 +103,7 @@ class TaskGroup:
             func_defaults=task._krauncher_defaults,
             classification_cache=task._krauncher_cls_cache,
             group=self,
+            files=files,
             **opts,
         )
 
@@ -142,6 +146,40 @@ class TaskResult:
     queue_wait_sec: float = 0.0
     download_sec: float = 0.0
     pip_install_sec: float = 0.0
+    # Files the task wrote in its working directory, {relative name: bytes}.
+    # None = the task declared none, or the worker did not act on the
+    # declaration; {} = handled, the task wrote no files.
+    artifacts: dict[str, bytes] | None = None
+
+    @property
+    def files(self) -> list[str]:
+        """Names of the artifacts the task produced, sorted."""
+        return sorted(self.artifacts or {})
+
+    def download(self, dest: str = ".") -> int:
+        """Write the artifacts under *dest*, keeping their relative paths.
+
+        Names arrive from the worker, so they are resolved and checked to stay
+        under *dest* — a result must not be able to write anywhere on the
+        caller's disk.
+
+        Returns the number of files written.
+        """
+        from pathlib import Path
+
+        if not self.artifacts:
+            return 0
+        root = Path(dest).resolve()
+        root.mkdir(parents=True, exist_ok=True)
+        for name, blob in self.artifacts.items():
+            path = (root / name).resolve()
+            if path == root or root not in path.parents:
+                raise KrauncherError(
+                    f"artifact name {name!r} escapes the download directory"
+                )
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(blob)
+        return len(self.artifacts)
 
     @classmethod
     def from_response(cls, data: dict[str, Any]) -> TaskResult:
@@ -338,6 +376,8 @@ def _relay_stream_sync(
     ek_priv: Any = None,
     plaintext_code: str | None = None,
     plaintext_args: dict[str, Any] | None = None,
+    plaintext_artifacts: bool = False,
+    plaintext_files: dict[str, bytes] | None = None,
     expected_worker_pub: str | None = None,
     use_tls: bool = False,
     ca_pem: str | None = None,
@@ -439,10 +479,17 @@ def _relay_stream_sync(
                             key_holder["key"] = shared_key
                         logger.debug("[relay] shared key derived task_id=%s", task_id[:8])
 
-                        payload_plain = json.dumps({
+                        payload_body: dict[str, Any] = {
                             "code_string": plaintext_code or "",
                             "args": plaintext_args or {},
-                        }).encode()
+                        }
+                        # Artifacts are data plane: the mount path, the
+                        # transport and the produced file names are the user's,
+                        # so they travel encrypted to the worker and never
+                        # through the broker's task record.
+                        if plaintext_artifacts:
+                            payload_body["artifacts"] = True
+                        payload_plain = _frame_payload(payload_body, plaintext_files)
                         enc_payload = encrypt(shared_key, payload_plain)
                         logger.debug(
                             "[relay] uploading payload task_id=%s plain_len=%d enc_len=%d",
@@ -501,6 +548,51 @@ def _relay_stream_sync(
         logger.debug("[relay] error task_id=%s: %s: %s", task_id[:8], type(exc).__name__, exc)
 
 
+def _frame_payload(body: dict[str, Any], files: dict[str, bytes] | None) -> bytes:
+    """Serialize the task payload, carrying input files as raw bytes.
+
+    Mirror of the worker's result frame: without files the wire form is the
+    plain JSON object it has always been; with them, a JSON header, a newline,
+    then the file bodies concatenated in header order. Files ride here rather
+    than through storage because they are task data on the same client → relay
+    → worker path as the code, which the broker never sees.
+    """
+    if not files:
+        return json.dumps(body).encode()
+    names = sorted(files)
+    header = {**body, "files": [{"name": n, "size": len(files[n])} for n in names]}
+    return json.dumps(header).encode() + b"\n" + b"".join(files[n] for n in names)
+
+
+def _unframe_result(plaintext: bytes) -> dict[str, Any]:
+    """Decode a task result blob into ``{"output": ..., "artifacts": {...}}``.
+
+    A result without artifacts is a plain JSON object, exactly as before. With
+    them the blob is framed: a JSON header, a newline, then the file bodies
+    concatenated in header order — bytes are carried raw rather than base64'd
+    into the JSON, which would cost a third of the size budget twice over.
+    """
+    split = plaintext.find(b"\n")
+    header = json.loads(plaintext[:split] if split != -1 else plaintext)
+    if "artifacts" not in header:
+        return header
+
+    body = plaintext[split + 1:] if split != -1 else b""
+    declared = sum(entry["size"] for entry in header["artifacts"])
+    if declared != len(body):
+        raise ValueTransferError(
+            f"artifact frame is inconsistent: header declares {declared} bytes, "
+            f"body carries {len(body)}"
+        )
+    files: dict[str, bytes] = {}
+    offset = 0
+    for entry in header["artifacts"]:
+        size = entry["size"]
+        files[entry["name"]] = body[offset:offset + size]
+        offset += size
+    return {"output": header.get("output"), "artifacts": files}
+
+
 def _fetch_relay_result_sync(
     task_id: str,
     target: str,
@@ -544,7 +636,7 @@ def _fetch_relay_result_sync(
     try:
         envelope = json.loads(resp.data)
         plaintext = decrypt(shared_key, envelope["enc"])
-        return json.loads(plaintext)
+        return _unframe_result(plaintext)
     except Exception as exc:
         logger.warning("[relay] result decrypt failed task_id=%s: %s", task_id[:8], exc)
         return None
@@ -559,6 +651,8 @@ async def _relay_stream(
     ek_priv: Any = None,
     plaintext_code: str | None = None,
     plaintext_args: dict[str, Any] | None = None,
+    plaintext_artifacts: bool = False,
+    plaintext_files: dict[str, bytes] | None = None,
     expected_worker_pub: str | None = None,
     ca_pem: str | None = None,
     key_holder: dict | None = None,
@@ -592,6 +686,8 @@ async def _relay_stream(
                 ek_priv=ek_priv,
                 plaintext_code=plaintext_code,
                 plaintext_args=plaintext_args,
+                plaintext_artifacts=plaintext_artifacts,
+                plaintext_files=plaintext_files,
                 expected_worker_pub=expected_worker_pub,
                 use_tls=use_tls,
                 ca_pem=ca_pem,
@@ -633,8 +729,12 @@ class TaskHandle:
         submit_start: float | None = None,
         resubmit: Callable[[], Any] | None = None,
         stream_stderr: bool = False,
+        artifacts: bool = False,
+        files: dict[str, bytes] | None = None,
     ) -> None:
         self.task_id = task_id
+        self._artifacts = artifacts
+        self._files = files
         self._client = client
         self._result: TaskResult | None = None
         self._last_status: str = ""
@@ -987,6 +1087,8 @@ class TaskHandle:
                                 ek_priv=self._ek_priv,
                                 plaintext_code=self._plaintext_code,
                                 plaintext_args=self._plaintext_args,
+                                plaintext_artifacts=self._artifacts,
+                                plaintext_files=self._files,
                                 expected_worker_pub=data.get("worker_pub_b64"),
                                 ca_pem=data.get("relay_ca"),
                                 key_holder=self._e2e_key_holder,
@@ -1075,6 +1177,7 @@ class TaskHandle:
                     if self._ek_priv is not None and data["status"] == "completed":
                         await self._merge_relay_result(data)
 
+                    self._check_artifacts_delivered()
                     _log_billing_summary(self._result)
                     return self._check_result(self._result)
 
@@ -1135,7 +1238,9 @@ class TaskHandle:
         if envelope is not None:
             import dataclasses
             self._result = dataclasses.replace(
-                self._result, output=envelope.get("output"),
+                self._result,
+                output=envelope.get("output"),
+                artifacts=envelope.get("artifacts"),
             )
         elif self._result.output is None:
             raise TaskError(
@@ -1144,6 +1249,27 @@ class TaskHandle:
                 "worker could not upload it). Re-run the task.",
                 task_id=self.task_id,
             )
+
+    def _check_artifacts_delivered(self) -> None:
+        """Fail loudly when a declared artifact set never came back.
+
+        The manifest distinguishes "the task wrote no files" (an empty list)
+        from "nothing acted on the declaration" (absent). Without this check
+        an unsupported broker or worker would drop ``artifacts=`` silently and
+        the caller would be left looking for files that were never collected.
+        """
+        if not self._artifacts or self._result is None:
+            return
+        if self._result.status != "completed":
+            return
+        if self._result.artifacts is not None:
+            return
+        raise KrauncherError(
+            f"task {self.task_id} declared artifacts but none were reported "
+            f"back. The worker that ran it does not support the artifacts API "
+            f"yet — write the files to a volume and read them with "
+            f"Volume.download_dir() until it does."
+        )
 
     async def status(self) -> dict[str, Any]:
         """Single poll — return raw status dict from broker."""

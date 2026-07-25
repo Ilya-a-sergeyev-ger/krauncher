@@ -337,6 +337,7 @@ class KrauncherClient:
         disk_gb: int = 10,
         dataset_size: float | None = None,
         stream_stderr: bool | None = None,
+        artifacts: bool = False,
     ) -> Callable:
         """Decorator that marks a function as a remote GPU task.
 
@@ -376,6 +377,10 @@ class KrauncherClient:
                 data sources.
             dataset_size: Dataset size in MB for CU estimation.  Overrides
                 auto-resolved size from data sources.
+            artifacts: Return the files the task writes beside itself, in its
+                working directory (``result.files`` / ``result.download()``).
+                They share the result's inline size budget — for anything large
+                use a volume instead.
         """
 
         client = self
@@ -383,7 +388,6 @@ class KrauncherClient:
         def decorator(func: Callable) -> Callable:
             # Serialize at decoration time — fail fast on invalid functions
             code_string, entry_point = serialize_function(func)
-
             # Extract default values from function signature at decoration time
             _func_defaults: dict[str, Any] = {}
             try:
@@ -391,6 +395,12 @@ class KrauncherClient:
                 for name, param in sig.parameters.items():
                     if param.default is not inspect.Parameter.empty:
                         _func_defaults[name] = param.default
+                if "files" in sig.parameters:
+                    raise KrauncherError(
+                        f"task {func.__name__!r} declares a parameter named "
+                        f"'files', which collides with the call-time channel "
+                        f"for sending files to the task. Rename the parameter."
+                    )
             except (ValueError, TypeError):
                 pass
 
@@ -401,6 +411,8 @@ class KrauncherClient:
 
             @functools.wraps(func)
             async def wrapper(**kwargs: Any) -> TaskHandle:
+                # files= travels beside the code, not as a task argument.
+                files = kwargs.pop("files", None)
                 return await client._submit(
                     code_string, entry_point, kwargs,
                     func_defaults=_func_defaults,
@@ -410,7 +422,8 @@ class KrauncherClient:
                     data_urls=data_urls, data=data, output=output,
                     volume=volume, group_id=group_id, provider=provider,
                     disk_gb=disk_gb, dataset_size=dataset_size,
-                    stream_stderr=stream_stderr,
+                    stream_stderr=stream_stderr, artifacts=artifacts,
+                    files=files,
                 )
 
             # Store metadata for introspection and group envelopes
@@ -428,6 +441,7 @@ class KrauncherClient:
                 "data_urls": data_urls, "data": data, "output": output,
                 "volume": volume, "provider": provider, "disk_gb": disk_gb,
                 "dataset_size": dataset_size, "stream_stderr": stream_stderr,
+                "artifacts": artifacts,
             }
 
             return wrapper
@@ -523,6 +537,8 @@ class KrauncherClient:
         disk_gb: int = 10,
         dataset_size: float | None = None,
         stream_stderr: bool | None = None,
+        artifacts: bool = False,
+        files: dict[str, bytes] | None = None,
     ) -> TaskHandle:
         """Submission core shared by :meth:`task` and :meth:`run_code`.
 
@@ -580,7 +596,7 @@ class KrauncherClient:
             priority=priority, data_urls=data_urls, data=data, output=output,
             volume=volume, group_id=group_id, provider=provider,
             disk_gb=disk_gb, stream_stderr=stream_stderr,
-            submit_start=_submit_start,
+            artifacts=artifacts, files=files, submit_start=_submit_start,
         )
 
     async def _classify(
@@ -712,6 +728,8 @@ class KrauncherClient:
         provider: str | None = None,
         disk_gb: int = 10,
         stream_stderr: bool | None = None,
+        artifacts: bool = False,
+        files: dict[str, bytes] | None = None,
         submit_start: float | None = None,
     ) -> TaskHandle:
         """Execution phase: build the payload and POST /tasks.
@@ -774,6 +792,22 @@ class KrauncherClient:
         if volume is not None:
             body["volume"] = volume
 
+        # Neither the declaration nor the files are sent here — they are data
+        # plane and ride encrypted to the worker with the code (see
+        # _relay_stream_sync). The broker sees none of it.
+        if files:
+            from .values import INLINE_BUDGET_BYTES
+            # The code shares the payload with the files, so it counts too —
+            # otherwise this passes and the transport fails instead.
+            total = sum(len(b) for b in files.values()) + len(code_string.encode())
+            if total > INLINE_BUDGET_BYTES:
+                raise ValueTransferError(
+                    f"code plus files= is {total / (1024 * 1024):.1f} MB — "
+                    f"exceeds the {INLINE_BUDGET_BYTES // (1024 * 1024)} MB "
+                    f"payload budget. Put data this size in a volume or a "
+                    f"data source."
+                )
+
         body["classification"] = classification.to_dict()
 
         async def _post_task() -> str:
@@ -797,6 +831,8 @@ class KrauncherClient:
             submit_start=submit_start,
             resubmit=_post_task,
             stream_stderr=effective_stream_stderr,
+            artifacts=artifacts,
+            files=files,
         )
         _inflight.register(handle)
         return handle
