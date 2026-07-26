@@ -10,11 +10,11 @@ classifies — numeric scalars pass through unchanged so the cas-analyzer's CU
 estimator still sees ``epochs``/``batch_size``.
 
 Anything that is not JSON-serializable (a model, a DataFrame, an open handle)
-is rejected here with a clear message: move it to a data source / volume.
+is rejected here with a clear message: move it to a data source.
 
 Values travel the E2E relay path together with the task code, so the guard
 covers both each value and the total against the inline budget
-(``INLINE_BUDGET_BYTES``); larger data must go through a volume / data source.
+(``INLINE_BUDGET_BYTES``); larger data must go through a data source.
 """
 
 from __future__ import annotations
@@ -59,14 +59,14 @@ def encode_inputs(
             raise ValueTransferError(
                 f"input {name!r}: {type(value).__name__} is not JSON-serializable "
                 f"({exc}). Pass JSON-safe values (numbers, strings, lists, dicts) "
-                f"or move large/complex data to a data source / volume."
+                f"or move large/complex data to a data source."
             ) from exc
         size = len(encoded.encode("utf-8"))
         if size > limit_bytes:
             raise ValueTransferError(
                 f"input {name!r}: {size / (1024 * 1024):.1f} MB exceeds the "
                 f"{limit_bytes / (1024 * 1024):.1f} MB inline budget — "
-                f"use a volume / data source."
+                f"use a data source."
             )
         total_bytes += size
         kwargs[name] = value
@@ -75,7 +75,7 @@ def encode_inputs(
         raise ValueTransferError(
             f"inputs total {total_bytes / (1024 * 1024):.1f} MB exceeds the "
             f"{limit_bytes / (1024 * 1024):.1f} MB inline budget — "
-            f"move large values to a volume / data source."
+            f"move large values to a data source."
         )
     return kwargs
 

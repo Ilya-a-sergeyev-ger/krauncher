@@ -12,7 +12,7 @@ source is submitted directly — the same ``(code_string, entry_point)`` shape
 The generated function is exactly what the analyzer classifies and the worker
 executes: plain user code, no transport scaffolding. Inputs/outputs therefore
 carry JSON-safe values only (enforced in ``krauncher.values``); large/complex
-data goes through a data source / volume, not through the function body.
+data goes through a data source, not through the function body.
 """
 
 from __future__ import annotations

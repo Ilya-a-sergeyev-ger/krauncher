@@ -378,6 +378,7 @@ def _relay_stream_sync(
     plaintext_args: dict[str, Any] | None = None,
     plaintext_artifacts: bool = False,
     plaintext_files: dict[str, bytes] | None = None,
+    plaintext_credentials: dict[str, dict[str, str]] | None = None,
     expected_worker_pub: str | None = None,
     use_tls: bool = False,
     ca_pem: str | None = None,
@@ -483,6 +484,12 @@ def _relay_stream_sync(
                             "code_string": plaintext_code or "",
                             "args": plaintext_args or {},
                         }
+                        # Storage credentials are the user's keys to third-party
+                        # resources. Krauncher stores none of them: they are read
+                        # from the caller's environment and ride this channel to
+                        # the worker, never touching the broker.
+                        if plaintext_credentials:
+                            payload_body["credentials"] = plaintext_credentials
                         # Artifacts are data plane: the mount path, the
                         # transport and the produced file names are the user's,
                         # so they travel encrypted to the worker and never
@@ -653,6 +660,7 @@ async def _relay_stream(
     plaintext_args: dict[str, Any] | None = None,
     plaintext_artifacts: bool = False,
     plaintext_files: dict[str, bytes] | None = None,
+    plaintext_credentials: dict[str, dict[str, str]] | None = None,
     expected_worker_pub: str | None = None,
     ca_pem: str | None = None,
     key_holder: dict | None = None,
@@ -688,6 +696,7 @@ async def _relay_stream(
                 plaintext_args=plaintext_args,
                 plaintext_artifacts=plaintext_artifacts,
                 plaintext_files=plaintext_files,
+                plaintext_credentials=plaintext_credentials,
                 expected_worker_pub=expected_worker_pub,
                 use_tls=use_tls,
                 ca_pem=ca_pem,
@@ -731,6 +740,7 @@ class TaskHandle:
         stream_stderr: bool = False,
         artifacts: bool = False,
         files: dict[str, bytes] | None = None,
+        credentials: dict[str, dict[str, str]] | None = None,
     ) -> None:
         self.task_id = task_id
         self._artifacts = artifacts
@@ -756,6 +766,7 @@ class TaskHandle:
         self._ek_priv = ek_priv
         self._plaintext_code = plaintext_code
         self._plaintext_args = plaintext_args
+        self._credentials = credentials
         # Shared task key captured by the relay stream thread; reused to
         # decrypt the FetchResult envelope after the task ends.
         self._e2e_key_holder: dict = {}
@@ -1089,6 +1100,7 @@ class TaskHandle:
                                 plaintext_args=self._plaintext_args,
                                 plaintext_artifacts=self._artifacts,
                                 plaintext_files=self._files,
+                                plaintext_credentials=self._credentials,
                                 expected_worker_pub=data.get("worker_pub_b64"),
                                 ca_pem=data.get("relay_ca"),
                                 key_holder=self._e2e_key_holder,
@@ -1267,8 +1279,7 @@ class TaskHandle:
         raise KrauncherError(
             f"task {self.task_id} declared artifacts but none were reported "
             f"back. The worker that ran it does not support the artifacts API "
-            f"yet — write the files to a volume and read them with "
-            f"Volume.download_dir() until it does."
+            f"yet — write the files to an output data source until it does."
         )
 
     async def status(self) -> dict[str, Any]:

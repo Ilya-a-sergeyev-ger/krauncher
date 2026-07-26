@@ -22,11 +22,11 @@ from .analyzer import (
     classify_explicit,
     classify_safety_net,
 )
+from .credentials import collect_credentials
 from .data_source import DataSource
 from .exceptions import KrauncherError, ValueTransferError
 from .models import Runner, TaskGroup, TaskHandle, _check_response
 from .serializer import serialize_function
-from .volume import Volume
 
 
 class _EstimateStub:
@@ -160,6 +160,7 @@ class KrauncherClient:
         gpu_arch: str | None = None,
         estimate_only: bool | None = None,
         stream_stderr: bool | None = None,
+        send_credentials: bool | None = None,
     ) -> None:
         self.api_key = api_key or os.environ.get("CAS_API_KEY", "")
         if not self.api_key:
@@ -202,6 +203,16 @@ class KrauncherClient:
             self.stream_stderr = stream_stderr
         else:
             self.stream_stderr = os.environ.get("CAS_STREAM_STDERR", "false").lower() in ("1", "true", "yes")
+
+        # Storage credentials are read from this process's environment and sent
+        # to the worker inside the E2E payload. Off means a task with private
+        # data fails on download rather than borrowing an unrelated profile.
+        if send_credentials is not None:
+            self.send_credentials = send_credentials
+        else:
+            self.send_credentials = os.environ.get(
+                "CAS_SEND_CREDENTIALS", "true",
+            ).lower() not in ("0", "false", "no")
 
         # Broker config cache (populated by _fetch_broker_config)
         self._config_cache: dict[str, Any] | None = None
@@ -290,18 +301,17 @@ class KrauncherClient:
     async def _resolve_dataset_mb(
         self,
         data: str | None,
-        volume: str | None,
     ) -> float | None:
         """Query broker for input dataset size (MB) for CU estimation.
 
-        Only includes input data sources and volumes — output sources are
+        Only includes input data sources — output sources are
         excluded because they don't affect training iteration count.
-        Returns None if no data/volume specified or on any error (best-effort).
+        Returns None if no data source is specified or on any error (best-effort).
         """
-        return await self._resolve_sizes([n for n in (data, volume) if n is not None])
+        return await self._resolve_sizes([n for n in (data,) if n is not None])
 
     async def _resolve_sizes(self, names: list[str]) -> float | None:
-        """Total size (MB) of registered data sources / volumes, best-effort."""
+        """Total size (MB) of registered data sources, best-effort."""
         if not names:
             return None
         try:
@@ -331,7 +341,6 @@ class KrauncherClient:
         data_urls: list[str] | None = None,
         data: str | None = None,
         output: str | None = None,
-        volume: str | None = None,
         group_id: str | None = None,
         provider: str | None = None,
         disk_gb: int = 10,
@@ -365,8 +374,6 @@ class KrauncherClient:
                 credentials from the database.  Downloads into ``/data``.
             output: Registered output data source name (is_output=True) —
                 broker resolves upload destination.  Task writes to ``/output``.
-            volume: Persistent volume name — S3-backed storage synced to
-                ``/volume`` before execution and pushed back after.
             group_id: Task group ID for host affinity — tasks with the
                 same group_id are routed to the same worker.
             provider: Pin task to a specific provider (e.g. ``"runpod"`` or
@@ -382,7 +389,7 @@ class KrauncherClient:
                 (``result.files`` / ``result.download()``).  Hidden files and
                 directories are skipped — they are caches libraries drop in
                 ``~``, not task output.  Artifacts share the result's inline
-                size budget; for anything large use a volume instead.
+                size budget; for anything large use a data source instead.
         """
 
         client = self
@@ -422,7 +429,7 @@ class KrauncherClient:
                     vram_gb=vram_gb, gpu_arch=gpu_arch, gpu_name=gpu_name,
                     pip=pip, timeout=timeout, priority=priority,
                     data_urls=data_urls, data=data, output=output,
-                    volume=volume, group_id=group_id, provider=provider,
+                    group_id=group_id, provider=provider,
                     disk_gb=disk_gb, dataset_size=dataset_size,
                     stream_stderr=stream_stderr, artifacts=artifacts,
                     files=files,
@@ -441,7 +448,7 @@ class KrauncherClient:
                 "vram_gb": vram_gb, "gpu_arch": gpu_arch, "gpu_name": gpu_name,
                 "pip": pip, "timeout": timeout, "priority": priority,
                 "data_urls": data_urls, "data": data, "output": output,
-                "volume": volume, "provider": provider, "disk_gb": disk_gb,
+                "provider": provider, "disk_gb": disk_gb,
                 "dataset_size": dataset_size, "stream_stderr": stream_stderr,
                 "artifacts": artifacts,
             }
@@ -462,7 +469,7 @@ class KrauncherClient:
         - ``gpu_name`` / ``gpu_arch`` / ``provider`` — shared; conflicting
           explicit pins raise immediately;
         - disk envelope = max member ``disk_gb`` + total size of all members'
-          data sources / volumes, so the group's data fits the host.
+          data sources, so the group's data fits the host.
 
         Submit members with ``await group.submit(task, **kwargs)`` or pass
         ``group=group`` to :meth:`run_code`.
@@ -491,7 +498,7 @@ class KrauncherClient:
             for key, bag in pins.items():
                 if opts.get(key):
                     bag.add(opts[key])
-            for key in ("data", "volume"):
+            for key in ("data",):
                 if opts.get(key):
                     data_names.add(opts[key])
             disk_gb = max(disk_gb, opts.get("disk_gb") or 0)
@@ -533,7 +540,6 @@ class KrauncherClient:
         data_urls: list[str] | None = None,
         data: str | None = None,
         output: str | None = None,
-        volume: str | None = None,
         group_id: str | None = None,
         provider: str | None = None,
         disk_gb: int = 10,
@@ -556,7 +562,7 @@ class KrauncherClient:
         if classification is None:
             classification = await self._classify(
                 code_string, merged_kwargs,
-                vram_gb=vram_gb, data=data, volume=volume,
+                vram_gb=vram_gb, data=data,
                 dataset_size=dataset_size,
                 classification_cache=classification_cache,
             )
@@ -596,7 +602,7 @@ class KrauncherClient:
             code_string, entry_point, kwargs, merged_kwargs, classification,
             gpu_arch=gpu_arch, gpu_name=gpu_name, pip=pip, timeout=timeout,
             priority=priority, data_urls=data_urls, data=data, output=output,
-            volume=volume, group_id=group_id, provider=provider,
+            group_id=group_id, provider=provider,
             disk_gb=disk_gb, stream_stderr=stream_stderr,
             artifacts=artifacts, files=files, submit_start=_submit_start,
         )
@@ -608,7 +614,6 @@ class KrauncherClient:
         *,
         vram_gb: int | None = None,
         data: str | None = None,
-        volume: str | None = None,
         dataset_size: float | None = None,
         classification_cache: list | None = None,
     ) -> TaskClassification:
@@ -631,7 +636,7 @@ class KrauncherClient:
             # _analyzer raises KrauncherError if no analyzer configured
             try:
                 # Query broker for data source sizes to improve CU estimation
-                dataset_mb = dataset_size or await client._resolve_dataset_mb(data, volume)
+                dataset_mb = dataset_size or await client._resolve_dataset_mb(data)
                 classification = await client._analyzer.classify(
                     code_string, dataset_mb=dataset_mb, kwargs=merged_kwargs,
                 )
@@ -725,7 +730,6 @@ class KrauncherClient:
         data_urls: list[str] | None = None,
         data: str | None = None,
         output: str | None = None,
-        volume: str | None = None,
         group_id: str | None = None,
         provider: str | None = None,
         disk_gb: int = 10,
@@ -791,8 +795,6 @@ class KrauncherClient:
             body["data"] = data
         if output is not None:
             body["output"] = output
-        if volume is not None:
-            body["volume"] = volume
 
         # Neither the declaration nor the files are sent here — they are data
         # plane and ride encrypted to the worker with the code (see
@@ -806,7 +808,7 @@ class KrauncherClient:
                 raise ValueTransferError(
                     f"code plus files= is {total / (1024 * 1024):.1f} MB — "
                     f"exceeds the {INLINE_BUDGET_BYTES // (1024 * 1024)} MB "
-                    f"payload budget. Put data this size in a volume or a "
+                    f"payload budget. Put data this size in a "
                     f"data source."
                 )
 
@@ -822,6 +824,8 @@ class KrauncherClient:
                 _check_response(resp)
                 return resp.json()["task_id"]
 
+        credentials = collect_credentials() if client.send_credentials else {}
+
         task_id = await _post_task()
         handle = TaskHandle(
             task_id=task_id,
@@ -829,6 +833,7 @@ class KrauncherClient:
             ek_priv=ek_priv,
             plaintext_code=code_string,
             plaintext_args=kwargs,
+            credentials=credentials,
             classification=classification,
             submit_start=submit_start,
             resubmit=_post_task,
@@ -860,7 +865,7 @@ class KrauncherClient:
 
         Values must be JSON-safe and fit the inline budget together with the
         code (see ``krauncher.values``); larger data goes through a
-        volume / data source.
+        data source.
 
         Args:
             code: The code block to execute remotely.
@@ -870,7 +875,7 @@ class KrauncherClient:
                 that are unset or non-JSON-safe are dropped remotely instead
                 of failing the task.
             **task_options: Same options as :meth:`task` (``pip``, ``timeout``,
-                ``vram_gb``, ``gpu_name``, ``volume``, ...), plus
+                ``vram_gb``, ``gpu_name``, ...), plus
                 ``classification=`` — a precomputed :class:`TaskClassification`
                 from :meth:`estimate_code` (skips the analysis phase) — and
                 ``group=`` — a :class:`TaskGroup` from :meth:`group` for
@@ -893,7 +898,6 @@ class KrauncherClient:
         lenient_outputs: bool = False,
         vram_gb: int | None = None,
         data: str | None = None,
-        volume: str | None = None,
         dataset_size: float | None = None,
     ) -> TaskClassification:
         """Analysis request for a code block — classify without submitting.
@@ -908,7 +912,7 @@ class KrauncherClient:
         )
         return await self._classify(
             source, kwargs,
-            vram_gb=vram_gb, data=data, volume=volume,
+            vram_gb=vram_gb, data=data,
             dataset_size=dataset_size,
         )
 
@@ -964,22 +968,6 @@ class KrauncherClient:
             A :class:`DataSource` handle.
         """
         return DataSource(self, name, urls, size_gb, description, is_output)
-
-    def volume(self, name: str, size_gb: int = 5) -> Volume:
-        """Create or get a persistent volume.
-
-        Ensures the volume exists on the broker (creates if missing).
-
-        Args:
-            name: Volume name.
-            size_gb: Quota in GB (used only on creation).
-
-        Returns:
-            A :class:`Volume` handle with ``upload()``, ``download()``,
-            ``ls()``, and ``delete()`` methods.
-        """
-        return Volume(self, name, size_gb)
-
     async def get_task(self, task_id: str) -> dict[str, Any]:
         """Fetch the full task record by id (same payload as ``GET /tasks/{id}``).
 
