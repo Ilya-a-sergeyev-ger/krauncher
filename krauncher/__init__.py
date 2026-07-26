@@ -65,12 +65,10 @@ from .analyzer import TaskClassification
 from .data_source import DataSource
 from .KrauncherClient import KrauncherClient
 from .models import Runner, TaskGroup, TaskHandle, TaskResult
-from .volume import Volume
 
 __all__ = [
     "KrauncherClient",
     "DataSource",
-    "Volume",
     "TaskClassification",
     "Runner",
     "TaskGroup",
