@@ -229,6 +229,47 @@ f-string / variable refs download inside execution.
 
 ---
 
+## Jupyter cell magic — `%%krauncher`
+
+A separate package (`krauncher-jupyter`, repo `cas-jupyter`) built on
+`run_code`: it marks one notebook cell to run remotely while the kernel stays
+local. Documented here because agents writing notebook code need the flags.
+
+```python
+%pip install krauncher-jupyter     # pulls this SDK
+%load_ext krauncher_magic
+```
+
+```python
+%%krauncher --pip torch
+model = build_model().to("cuda")
+losses = train(model, epochs, batch_size)   # epochs, batch_size come from the notebook
+accuracy = evaluate(model)
+```
+
+No flags are required: the cell's free variables become inputs and its
+assigned names become outputs (`codeblock.analyze_names`), so `losses` and
+`accuracy` are ordinary notebook variables afterwards. The price is quoted
+before the cell runs; logs stream live.
+
+| Flag | Meaning |
+|---|---|
+| `--in NAMES` | override the auto-detected inputs (comma-separated, repeatable) |
+| `--out NAMES` | override the auto-detected outputs |
+| `--pip PKGS` | pip packages installed in the sandbox before execution |
+| `--vram N` | minimum GPU VRAM in GB (default: auto-classified from the code) |
+| `--gpu-name S` | pin a GPU model (case-insensitive substring, e.g. `A4000`) |
+| `--timeout N` | execution timeout in seconds (default 600) |
+| `--dataset-size MB` | declared input size for the quote (e.g. private S3 objects) |
+| `--async [NAME]` | non-blocking: inject a task handle as `NAME` (default `kr_task`) |
+| `--estimate` | classify and print the quote only — do not run |
+
+Same credentials as the SDK (`CAS_API_KEY`, optional `CAS_BROKER_URL`), same
+JSON-safe 16 MB inline budget for transferred values, and no GPU state across
+cells — each marked cell is its own ephemeral task.
+
+---
+
 ## Task groups — `client.group()`
 
 A `TaskGroup` is a shared-requirements envelope derived from the member tasks
