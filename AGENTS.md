@@ -59,13 +59,24 @@ env vars / a `.env` file in CWD.
 |---------------------|------------------------|--------------------------|-------------------------------------------|
 | `api_key`           | `CAS_API_KEY`          | — (required)             | API key (`cas_...`)                       |
 | `broker_url`        | `CAS_BROKER_URL`       | `https://krauncher.com/api` | Broker base URL                        |
-| `encrypt`           | `CAS_ENCRYPT`          | `true`                   | E2E-encrypt code/args                     |
 | `encrypt_analyzer`  | `CAS_ENCRYPT_ANALYZER` | `true`                   | E2E-encrypt code sent to the analyzer     |
 | `analyzer_timeout`  | `CAS_ANALYZER_TIMEOUT` | `10.0`                   | Analyzer call timeout (s)                 |
 | `gpu_name`          | `KRAUNCHER_GPU_NAME`   | `""`                     | Default GPU model filter                  |
 | `gpu_arch`          | `KRAUNCHER_GPU_ARCH`   | `""`                     | Default GPU arch filter                   |
 | `estimate_only`     | `CAS_ESTIMATE_ONLY`    | `false`                  | Run analyzer, return classification, skip submission |
 | `stream_stderr`     | `CAS_STREAM_STDERR`    | `false`                  | Stream worker stderr to client            |
+| —                   | `KRAUNCHER_VRAM_GB`    | `""`                     | Overrides `@task(vram_gb=...)` — re-targets existing tasks to another VRAM class without editing them |
+| —                   | `CAS_CLIENT_CONFIG`    | `.env` in CWD            | Path to the config file to load; must be a real env var, not a key inside that file |
+| —                   | `KRAUNCHER_DEBUG`      | `false`                  | Verbose client logging                    |
+
+**Task E2E encryption is mandatory** — code and arguments are always encrypted
+to the worker, the broker rejects plaintext submissions, and there is no opt-out
+switch. `encrypt_analyzer` above is a separate, still-optional path: the
+`/estimate` call to the analyzer.
+
+Relay transport (`KRAUNCHER_RELAY_TLS`, `KRAUNCHER_RELAY_CA`,
+`KRAUNCHER_RELAY_AUTHORITY`) is negotiated automatically — the broker
+distributes the CA in-memory. Set these only against a self-hosted relay.
 
 ---
 
@@ -90,6 +101,7 @@ All keyword-only.
 | `disk_gb`      | `int`        | `10`    | Minimum disk (GB). Broker takes max of this and data-source size.       |
 | `dataset_size` | `float`      | `None`  | Dataset size (MB) for CU estimation; overrides auto-resolved size.      |
 | `stream_stderr`| `bool`       | `None`  | Per-task override of client `stream_stderr`.                            |
+| `artifacts`    | `bool`       | `False` | Return the files the task wrote beside itself → `result.artifacts`.     |
 
 **GPU selection:** prefer leaving `vram_gb=None` (auto-classify). Use
 `gpu_name`/`gpu_arch`/`vram_gb` only to constrain.
@@ -120,6 +132,7 @@ stdout: str            stderr: str            traceback: str | None
 exit_code: int         actual_gpu: str
 execution_time_sec: float   duration_sec: float   gpu_util_avg: float
 queue_wait_sec: float       download_sec: float   pip_install_sec: float
+artifacts: dict[str, bytes] | None   # files the task wrote; see below
 # Billing (client currency unless noted):
 actual_cu: float            # measured compute units
 provider_cost: float        # raw provider cost, no markup/fee
@@ -128,6 +141,45 @@ charged_local: float        fee_ku: float         fee_local: float
 total_charged_ku: float     # charged_ku + fee_ku (full balance deduction)
 total_charged_local: float  billing_currency: str
 ```
+
+---
+
+## Files in, files out
+
+Values return as JSON; files do not. Both directions ride the same encrypted
+package that already carries the code, so there is no storage to configure and
+no mount path to remember — and the broker sees none of it.
+
+```python
+@client.task(vram_gb=1, timeout=300, artifacts=True)   # opt in to get files back
+def transform(width=160):
+    from PIL import Image
+    text = open("sample.txt").read()                   # arrived beside the task
+    open("out.txt", "w").write(text.upper())           # written beside the task
+    Image.new("RGB", (width, 120)).save("gradient.png")
+    return {"ok": True}
+
+handle = await transform(width=160, files={"sample.txt": b"hello"})
+result = await handle
+result.files                    # ["gradient.png", "out.txt"] — names, sorted
+result.artifacts["out.txt"]     # b"HELLO" — raw bytes, never base64
+result.download("received")     # write them under ./received, returns the count
+```
+
+- `files={name: bytes}` is a **call-time** argument, not a `@client.task`
+  option — it travels beside the code, not as a task argument. A task that
+  declares a parameter named `files` raises `KrauncherError` at decoration.
+- Files arrive in the task's working directory, which is also its `HOME`. Files
+  the task writes there come back only when `artifacts=True`.
+- Hidden files and directories are skipped — they are caches libraries drop in
+  `~`, not task output.
+- Both directions share the **16 MB inline budget** with the code and the
+  result. For a dataset or a checkpoint use `volume=`; overshooting is reported
+  before the wire, not after.
+- `result.artifacts is None` means the task declared none, or the worker did not
+  act on the declaration; `{}` means it was handled and the task wrote nothing.
+- `download()` resolves names against the destination and refuses any that
+  escape it — a result cannot write elsewhere on your disk. Tutorial 54.
 
 ---
 
@@ -159,6 +211,7 @@ losses = result.output["losses"]              # or krauncher.values.decode_outpu
   outputs. This is exactly what the `%%krauncher` magic uses.
 - Extra `task_options`: `classification=` — a precomputed `TaskClassification`
   (skips analysis), and `group=` — a `TaskGroup` for warm-worker co-location.
+  `artifacts=` / `files=` work here too (see "Files in, files out").
 
 `client.estimate_code(code, *, inputs=, outputs=, lenient_outputs=, vram_gb=,
 data=, volume=, dataset_size=)` → `TaskClassification`: classify the exact
@@ -254,6 +307,8 @@ Response (rows sorted cheapest-first by `estimated_cost_usd`):
       "min_price_usd": 0.0985, "prices": { "vastai": 0.0985 } }
   ],
   "cu_breakdown": { "cu_compute": 0.0, "cu_io": 0.0, "cu_setup": 0.0 }, // where the cost lives
+  "setup_sec": 0.0, "io_sec": 0.0,                    // measured setup / I/O time
+  "provider_warmup_sec": { "vastai": 45 },            // cold start, per provider
   "min_vram_gb": 6, "confidence": 0.0, "analysis_method": "ast"        // "ast" | "llm"
 }
 ```
@@ -261,7 +316,8 @@ Response (rows sorted cheapest-first by `estimated_cost_usd`):
 - `rows[0]` is the cheapest GPU that fits. Empty `rows` ⇒ CPU-only or the model
   wasn't recognized (no GPU compute to price).
 - `cu_breakdown` shows whether the job is compute-, I/O-, or setup-bound — what to
-  optimize.
+  optimize. `provider_warmup_sec` is the cold start that precedes the run; on a
+  short task it can dominate the choice of provider.
 - A prediction is an **expected** cost, not a guarantee (real-host variance).
 - **The loop:** edit the task → estimate → keep what's cheaper → repeat. Costs no
   GPU-seconds; ideal as an agent tool.
@@ -294,7 +350,8 @@ All inherit `KrauncherError`.
 - **Keyword args only** when calling the task.
 - **Ephemeral worker storage.** `/tmp` and local disk vanish after the task.
   Persist results by returning them, or push to S3 / an `output` source / a
-  `volume`. `/data` is read-only input; `/output` and `/volume` persist.
+  `volume`. `/data` is read-only input; `/output` and `/volume` persist. Files
+  written beside the task come back with `artifacts=True`.
 - **Return must serialize** (JSON-compatible). Don't return tensors/models.
 - **Datasets:** sweet spot ≤ ~2 GB. Use `data_urls=`/`data=` (→ `/data`) and
   `hf://...` paths for HuggingFace assets (tutorials 06, 15, 19).
@@ -314,4 +371,4 @@ Start at `01_remote_simple.py`. Then by topic: deps `02`, errors `03`, timeout
 vision training `18`, BERT/IMDB `20`, LoRA `21`, inference `22`/`30`–`34`,
 batched inference `35`/`36`. Values / adapters primitives: `run_code` with
 named in/out values `50`, `client.group()` envelope `52`, HuggingFace-native
-auto pre-fetch `53`.
+auto pre-fetch `53`, files in / artifacts out `54`.
