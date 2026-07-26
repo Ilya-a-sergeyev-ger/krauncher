@@ -22,7 +22,7 @@ from .analyzer import (
     classify_explicit,
     classify_safety_net,
 )
-from .credentials import collect_credentials, describe_credentials
+from .credentials import collect_credentials
 from .data_source import DataSource
 from .exceptions import KrauncherError, ValueTransferError
 from .models import Runner, TaskGroup, TaskHandle, _check_response
@@ -825,10 +825,6 @@ class KrauncherClient:
                 return resp.json()["task_id"]
 
         credentials = collect_credentials() if client.send_credentials else {}
-        if credentials:
-            _logger.info(
-                "Attaching storage credentials: %s", describe_credentials(credentials),
-            )
 
         task_id = await _post_task()
         handle = TaskHandle(

@@ -50,24 +50,3 @@ def collect_credentials() -> dict[str, dict[str, str]]:
         creds["hf"] = {"type": "hf", "token": token}
 
     return creds
-
-
-def _mask(secret: str) -> str:
-    """Enough of a secret to recognize it, not enough to use it."""
-    if len(secret) < 12:
-        return "…"
-    return f"{secret[:4]}…{secret[-3:]}"
-
-
-def describe_credentials(creds: dict[str, dict[str, str]]) -> str:
-    """One-line summary for the submit log.
-
-    Standard variable names mean an unrelated AWS profile in the environment
-    would otherwise be shipped to a third-party host with no visible trace.
-    """
-    parts = []
-    if "s3" in creds:
-        parts.append(f"s3={_mask(creds['s3']['access_key'])}")
-    if "hf" in creds:
-        parts.append(f"hf={_mask(creds['hf']['token'])}")
-    return ", ".join(parts)
