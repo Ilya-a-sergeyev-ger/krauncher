@@ -121,7 +121,6 @@ class KrauncherClient:
     ================ ====================== ==========================================
     api_key          CAS_API_KEY            (required)
     broker_url       CAS_BROKER_URL         https://krauncher.com/api
-    encrypt_analyzer CAS_ENCRYPT_ANALYZER   true
     analyzer_timeout CAS_ANALYZER_TIMEOUT   10.0
     gpu_name         KRAUNCHER_GPU_NAME     ""
     gpu_arch         KRAUNCHER_GPU_ARCH     ""
@@ -154,7 +153,6 @@ class KrauncherClient:
         api_key: str | None = None,
         broker_url: str | None = None,
         analyzer_url: Any = _UNSET,
-        encrypt_analyzer: bool | None = None,
         analyzer_timeout: float | None = None,
         gpu_name: str | None = None,
         gpu_arch: str | None = None,
@@ -172,17 +170,12 @@ class KrauncherClient:
         self.broker_url = (broker_url or os.environ.get("CAS_BROKER_URL", "https://krauncher.com/api")).rstrip("/")
 
         # Task E2E encryption is mandatory — the broker rejects plaintext
-        # submissions. There is no opt-out. (encrypt_analyzer below is a
-        # separate, still-optional path: the /estimate analyzer call.)
+        # submissions. There is no opt-out. The /estimate analyzer call is
+        # also always E2E-encrypted; there is no plaintext fallback.
 
         # analyzer_url is resolved exclusively from the broker (/v1/me).
         # The constructor parameter is kept only for tests / edge cases.
         self._analyzer_url_override = analyzer_url if analyzer_url is not _UNSET else None
-
-        if encrypt_analyzer is not None:
-            self._encrypt_analyzer = encrypt_analyzer
-        else:
-            self._encrypt_analyzer = os.environ.get("CAS_ENCRYPT_ANALYZER", "true").lower() not in ("0", "false", "no")
 
         self._analyzer_timeout = analyzer_timeout or float(os.environ.get("CAS_ANALYZER_TIMEOUT", "10.0"))
         self._analyzer_client: AnalyzerClient | None = None
@@ -290,7 +283,6 @@ class KrauncherClient:
             return self._analyzer_client
         self._analyzer_client = AnalyzerClient(
             analyzer_url=url,
-            encrypt=self._encrypt_analyzer,
             timeout=self._analyzer_timeout,
             token=token,
             user_id=user_id,

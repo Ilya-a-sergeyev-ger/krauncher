@@ -59,7 +59,6 @@ env vars / a `.env` file in CWD.
 |---------------------|------------------------|--------------------------|-------------------------------------------|
 | `api_key`           | `CAS_API_KEY`          | — (required)             | API key (`cas_...`)                       |
 | `broker_url`        | `CAS_BROKER_URL`       | `https://krauncher.com/api` | Broker base URL                        |
-| `encrypt_analyzer`  | `CAS_ENCRYPT_ANALYZER` | `true`                   | E2E-encrypt code sent to the analyzer     |
 | `analyzer_timeout`  | `CAS_ANALYZER_TIMEOUT` | `10.0`                   | Analyzer call timeout (s)                 |
 | `gpu_name`          | `KRAUNCHER_GPU_NAME`   | `""`                     | Default GPU model filter                  |
 | `gpu_arch`          | `KRAUNCHER_GPU_ARCH`   | `""`                     | Default GPU arch filter                   |
@@ -71,8 +70,8 @@ env vars / a `.env` file in CWD.
 
 **Task E2E encryption is mandatory** — code and arguments are always encrypted
 to the worker, the broker rejects plaintext submissions, and there is no opt-out
-switch. `encrypt_analyzer` above is a separate, still-optional path: the
-`/estimate` call to the analyzer.
+switch. The `/estimate` call to the analyzer is also always E2E-encrypted, with
+no plaintext fallback.
 
 Relay transport (`KRAUNCHER_RELAY_TLS`, `KRAUNCHER_RELAY_CA`,
 `KRAUNCHER_RELAY_AUTHORITY`) is negotiated automatically — the broker

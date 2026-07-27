@@ -178,7 +178,6 @@ class AnalyzerClient:
     def __init__(
         self,
         analyzer_url: str,
-        encrypt: bool = True,
         timeout: float = 10.0,
         poll_interval: float = 0.5,
         token: str | None = None,
@@ -186,7 +185,6 @@ class AnalyzerClient:
         llm_backend: str | None = None,
     ) -> None:
         self._url = analyzer_url.rstrip("/")
-        self._encrypt = encrypt
         self._timeout = timeout
         self._poll_interval = poll_interval
         self._user_id = user_id
@@ -251,20 +249,17 @@ class AnalyzerClient:
                 if safe_kwargs:
                     body["kwargs"] = safe_kwargs
 
-            if self._encrypt:
-                pub_bytes = await self._fetch_pubkey(session)
-                ek_priv, ek_pub_bytes = generate_keypair()
-                shared_secret = derive_shared_secret(ek_priv, pub_bytes)
-                encrypted_code = encrypt(shared_secret, code.encode("utf-8"))
-                ek_pub_b64 = base64.urlsafe_b64encode(ek_pub_bytes).decode().rstrip("=")
-                body["encrypted_code"] = encrypted_code
-                body["client_public_key"] = ek_pub_b64
-            else:
-                body["code"] = code
+            pub_bytes = await self._fetch_pubkey(session)
+            ek_priv, ek_pub_bytes = generate_keypair()
+            shared_secret = derive_shared_secret(ek_priv, pub_bytes)
+            encrypted_code = encrypt(shared_secret, code.encode("utf-8"))
+            ek_pub_b64 = base64.urlsafe_b64encode(ek_pub_bytes).decode().rstrip("=")
+            body["encrypted_code"] = encrypted_code
+            body["client_public_key"] = ek_pub_b64
 
             # POST /analyze
             resp = await session.post(f"{self._url}/analyze", json=body)
-            if resp.status_code == 400 and retry and self._encrypt:
+            if resp.status_code == 400 and retry:
                 # Possible key rotation — clear cache and retry once
                 self._analyzer_pubkey = None
                 return await self._classify_inner(code, dataset_mb, kwargs=kwargs, retry=False)
