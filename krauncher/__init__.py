@@ -56,6 +56,7 @@ from .exceptions import (
     NoCapacityError,
     PayloadDeliveryError,
     RemoteTimeout,
+    RetriesExhausted,
     SerializationError,
     TaskError,
     TaskTimeout,
@@ -82,6 +83,7 @@ __all__ = [
     "NoCapacityError",
     "PayloadDeliveryError",
     "RemoteTimeout",
+    "RetriesExhausted",
     "SerializationError",
     "ValueTransferError",
 ]

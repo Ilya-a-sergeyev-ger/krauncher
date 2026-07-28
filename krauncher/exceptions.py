@@ -141,6 +141,27 @@ class NoCapacityError(KrauncherError):
         self.broker_message = message
 
 
+class RetriesExhausted(KrauncherError):
+    """Raised when every transparent retry of an infrastructure failure failed.
+
+    The task never ran to completion: each attempt died for a reason the
+    broker flagged as our fault (host lost, no capacity, ...). ``status``
+    carries the last one. Raise the retry budget via
+    ``KrauncherClient(max_task_retries=...)`` / ``CAS_MAX_TASK_RETRIES``.
+    """
+
+    def __init__(self, task_id: str, status: str, attempts: int, message: str = "") -> None:
+        super().__init__(
+            f"Task {task_id} gave up after {attempts} infrastructure "
+            f"retries (last status: {status})"
+            + (f": {message}" if message else "")
+        )
+        self.task_id = task_id
+        self.status = status
+        self.attempts = attempts
+        self.broker_message = message
+
+
 class SerializationError(KrauncherError):
     """Raised when a function cannot be serialized for remote execution."""
 

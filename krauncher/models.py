@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Callable
 import httpx
 
 from . import _inflight
-from .exceptions import AuthError, E2EIdentityMismatch, InsufficientBalanceError, KrauncherError, NoCapacityError, PayloadDeliveryError, RemoteTimeout, TaskError, TaskTimeout, ValueTransferError
+from .exceptions import AuthError, E2EIdentityMismatch, InsufficientBalanceError, KrauncherError, NoCapacityError, PayloadDeliveryError, RemoteTimeout, RetriesExhausted, TaskError, TaskTimeout, ValueTransferError
 
 if TYPE_CHECKING:
     from .KrauncherClient import KrauncherClient
@@ -773,16 +773,33 @@ class TaskHandle:
         #: Task classification result (TaskClassification or None)
         self.classification = classification
         # Re-submit callback: returns a new task_id when invoked. Used by wait()
-        # to transparently retry on no_capacity. If None, NoCapacityError is
-        # raised to the caller so they can implement their own policy.
+        # to transparently retry a failure the broker flagged as retriable. If
+        # None, the failure is raised to the caller so they can implement their
+        # own policy.
         self._resubmit = resubmit
-        self._no_capacity_attempts: int = 0
+        self._retry_attempts: int = 0
+        # True once this attempt reached "executing": from then on the clock
+        # belongs to the task, so a deadline hit is a real timeout, not ours.
+        self._reached_executing: bool = False
         #: When true and wait() is called without on_log, install a default handler
         #: that mirrors remote stdout/stderr to local sys.stdout/sys.stderr.
         self.stream_stderr = stream_stderr
 
     def __repr__(self) -> str:
         return f"TaskHandle(task_id={self.task_id!r})"
+
+    def _reset_for_retry(self) -> None:
+        """Clear per-attempt state so the new task_id reports its phases afresh."""
+        self._last_status = ""
+        self._reached_executing = False
+        self._phase_waiting_logged = False
+        self._phase_host_logged = False
+        self._phase_provisioning_logged = False
+        self._phase_executing_logged = False
+        self._phase_downloading_logged = False
+        self._initial_hw = ""
+        self._host_change_logged = False
+        self._waiting_start = None
 
     def __await__(self):
         """Allow ``result = await task``."""
@@ -1017,6 +1034,8 @@ class TaskHandle:
 
                 # Log status transitions for user visibility (3 phases).
                 current_status = data.get("status", "")
+                if current_status == "executing":
+                    self._reached_executing = True
                 if current_status and current_status not in TERMINAL_STATUSES:
                     hi = data.get("host_info") or {}
                     gpu = hi.get("gpu_model", "")
@@ -1108,40 +1127,49 @@ class TaskHandle:
                             name=f"relay-{self.task_id[:8]}",
                         )
 
-                if data["status"] == "no_capacity":
+                # Infrastructure fault: the broker flags it retriable (stage 1).
+                # ``no_capacity`` is treated as retriable even without the flag,
+                # so an older broker keeps its previous behaviour.
+                status_now = data["status"]
+                if (
+                    status_now in TERMINAL_STATUSES
+                    and (data.get("retriable") or status_now == "no_capacity")
+                ):
                     if relay_task is not None:
                         relay_task.cancel()
                         relay_task = None
-                    if self._resubmit is None:
+                    msg = data.get("message", "") or status_now
+                    max_retries = self._client.max_task_retries
+
+                    if self._resubmit is not None and self._retry_attempts < max_retries:
+                        self._retry_attempts += 1
+                        logger.info(
+                            "Infrastructure failure (%s), retrying %d/%d: %s",
+                            status_now, self._retry_attempts, max_retries, msg,
+                        )
+                        await asyncio.sleep(5.0)
+                        self.task_id = await self._resubmit()
+                        self._reset_for_retry()
+                        # The retry budget is the attempt counter, not wall
+                        # clock: each attempt gets the full timeout again.
+                        deadline = loop.time() + timeout
+                        delay = 0.5
+                        continue
+
+                    # Out of attempts (or no resubmit callback at all).
+                    if status_now == "no_capacity":
                         raise NoCapacityError(
                             task_id=self.task_id,
                             message=data.get("message", ""),
                         )
-                    self._no_capacity_attempts += 1
-                    msg = data.get("message", "") or "no matching hosts"
-                    logger.debug(
-                        "No capacity (attempt %d, task_id=%s): %s — retrying in 5s",
-                        self._no_capacity_attempts, self.task_id, msg,
-                    )
-                    remaining = deadline - loop.time()
-                    if remaining <= 0:
-                        raise TaskTimeout(self.task_id, timeout)
-                    await asyncio.sleep(min(5.0, remaining))
-                    if loop.time() >= deadline:
-                        raise TaskTimeout(self.task_id, timeout)
-                    new_task_id = await self._resubmit()
-                    self.task_id = new_task_id
-                    self._last_status = ""
-                    self._phase_waiting_logged = False
-                    self._phase_host_logged = False
-                    self._phase_provisioning_logged = False
-                    self._phase_executing_logged = False
-                    self._phase_downloading_logged = False
-                    self._initial_hw = ""
-                    self._host_change_logged = False
-                    self._waiting_start = None
-                    delay = 0.5
-                    continue
+                    if self._retry_attempts:
+                        raise RetriesExhausted(
+                            task_id=self.task_id, status=status_now,
+                            attempts=self._retry_attempts,
+                            message=data.get("message", ""),
+                        )
+                    # Never retried (no callback) — fall through to the normal
+                    # terminal handling so the caller sees the usual result.
 
                 if data["status"] in TERMINAL_STATUSES:
                     if relay_task is not None:
@@ -1197,6 +1225,30 @@ class TaskHandle:
                 if remaining <= 0:
                     if relay_task is not None:
                         relay_task.cancel()
+                        relay_task = None
+                    # A deadline hit before the task ever reached "executing"
+                    # is our infrastructure being slow (provisioning, queue),
+                    # not the task overrunning — cancel it and start a new one.
+                    # Once it is executing the clock is the task's own, and an
+                    # overrun is a real timeout: no retry.
+                    if (
+                        not self._reached_executing
+                        and self._resubmit is not None
+                        and self._retry_attempts < self._client.max_task_retries
+                    ):
+                        self._retry_attempts += 1
+                        logger.info(
+                            "Task never started within %.0fs (still %s), "
+                            "retrying %d/%d",
+                            timeout, self._last_status or "queued",
+                            self._retry_attempts, self._client.max_task_retries,
+                        )
+                        self._cancel_remote()
+                        self.task_id = await self._resubmit()
+                        self._reset_for_retry()
+                        deadline = loop.time() + timeout
+                        delay = 0.5
+                        continue
                     raise TaskTimeout(self.task_id, timeout)
 
                 await asyncio.sleep(min(delay, remaining))

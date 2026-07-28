@@ -64,6 +64,7 @@ env vars / a `.env` file in CWD.
 | `gpu_arch`          | `KRAUNCHER_GPU_ARCH`   | `""`                     | Default GPU arch filter                   |
 | `estimate_only`     | `CAS_ESTIMATE_ONLY`    | `false`                  | Run analyzer, return classification, skip submission |
 | `stream_stderr`     | `CAS_STREAM_STDERR`    | `false`                  | Stream worker stderr to client            |
+| `max_task_retries`  | `CAS_MAX_TASK_RETRIES` | `3`                      | Transparent resubmits after an infrastructure failure (0 disables) |
 | —                   | `KRAUNCHER_VRAM_GB`    | `""`                     | Overrides `@task(vram_gb=...)` — re-targets existing tasks to another VRAM class without editing them |
 | —                   | `CAS_CLIENT_CONFIG`    | `.env` in CWD            | Path to the config file to load; must be a real env var, not a key inside that file |
 | —                   | `KRAUNCHER_DEBUG`      | `false`                  | Verbose client logging                    |

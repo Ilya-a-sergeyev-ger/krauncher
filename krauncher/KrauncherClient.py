@@ -126,6 +126,7 @@ class KrauncherClient:
     gpu_arch         KRAUNCHER_GPU_ARCH     ""
     (task vram_gb)   KRAUNCHER_VRAM_GB      "" (overrides @task(vram_gb=...))
     estimate_only    CAS_ESTIMATE_ONLY      false
+    max_task_retries CAS_MAX_TASK_RETRIES   3
     ================ ====================== ==========================================
 
     Analyzer URL is resolved from the broker (``GET /v1/me → analyzer_url``).
@@ -159,6 +160,7 @@ class KrauncherClient:
         estimate_only: bool | None = None,
         stream_stderr: bool | None = None,
         send_credentials: bool | None = None,
+        max_task_retries: int | None = None,
     ) -> None:
         self.api_key = api_key or os.environ.get("CAS_API_KEY", "")
         if not self.api_key:
@@ -206,6 +208,15 @@ class KrauncherClient:
             self.send_credentials = os.environ.get(
                 "CAS_SEND_CREDENTIALS", "true",
             ).lower() not in ("0", "false", "no")
+
+        # How many times wait() transparently resubmits a task whose failure
+        # was our infrastructure's fault (broker-flagged retriable, or a
+        # deadline hit before the task ever ran). Not a wall-clock budget:
+        # each attempt is a fresh task_id.
+        if max_task_retries is not None:
+            self.max_task_retries = max_task_retries
+        else:
+            self.max_task_retries = int(os.environ.get("CAS_MAX_TASK_RETRIES", "3"))
 
         # Broker config cache (populated by _fetch_broker_config)
         self._config_cache: dict[str, Any] | None = None
