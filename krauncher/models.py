@@ -736,7 +736,7 @@ class TaskHandle:
         plaintext_args: dict[str, Any] | None = None,
         classification: Any = None,
         submit_start: float | None = None,
-        resubmit: Callable[[], Any] | None = None,
+        resubmit: Callable[..., Any] | None = None,
         stream_stderr: bool = False,
         artifacts: bool = False,
         files: dict[str, bytes] | None = None,
@@ -1148,7 +1148,9 @@ class TaskHandle:
                             status_now, self._retry_attempts, max_retries, msg,
                         )
                         await asyncio.sleep(5.0)
-                        self.task_id = await self._resubmit()
+                        self.task_id = await self._resubmit(
+                            self.task_id, self._retry_attempts + 1,
+                        )
                         self._reset_for_retry()
                         # The retry budget is the attempt counter, not wall
                         # clock: each attempt gets the full timeout again.
@@ -1244,7 +1246,9 @@ class TaskHandle:
                             self._retry_attempts, self._client.max_task_retries,
                         )
                         self._cancel_remote()
-                        self.task_id = await self._resubmit()
+                        self.task_id = await self._resubmit(
+                            self.task_id, self._retry_attempts + 1,
+                        )
                         self._reset_for_retry()
                         deadline = loop.time() + timeout
                         delay = 0.5

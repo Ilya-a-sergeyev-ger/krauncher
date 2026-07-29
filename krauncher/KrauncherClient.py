@@ -817,7 +817,13 @@ class KrauncherClient:
 
         body["classification"] = classification.to_dict()
 
-        async def _post_task() -> str:
+        async def _post_task(parent_task_id: str | None = None, attempt: int = 1) -> str:
+            # A retry says which task it replaces, so the chain of attempts is
+            # one story in the task history and the billing rows rather than
+            # N unrelated tasks.
+            if parent_task_id:
+                body["parent_task_id"] = parent_task_id
+                body["attempt"] = attempt
             async with httpx.AsyncClient(timeout=30.0) as session:
                 resp = await session.post(
                     f"{client.broker_url}/tasks",
