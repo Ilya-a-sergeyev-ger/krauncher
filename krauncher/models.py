@@ -805,10 +805,15 @@ class TaskHandle:
         """Allow ``result = await task``."""
         return self.wait().__await__()
 
-    def _cancel_remote(self) -> None:
+    def _cancel_remote(self, reason: str = "user") -> None:
         """Best-effort synchronous DELETE /tasks/{id} so the broker releases the
         prepaid hold when the caller abandons the task before it reaches a
         terminal status (Ctrl-C, timeout, exception).
+
+        ``reason`` tells the broker who willed the cancel: ``user`` (the
+        caller gave up) or ``infra_retry`` (we are cancelling a task that
+        never started, to submit it again). An ``infra_retry`` cancel is
+        settled as an infrastructure fault — no dispatch fee.
 
         Synchronous on purpose: it must complete even while the event loop is
         being torn down by Ctrl-C, where an awaited call could be re-cancelled.
@@ -822,6 +827,7 @@ class TaskHandle:
                 s.delete(
                     f"{self._client.broker_url}/tasks/{self.task_id}",
                     headers={"X-API-Key": self._client.api_key},
+                    params={"reason": reason},
                 )
             logger.debug("cancel-on-abandon sent: %s", self.task_id)
         except Exception as e:
@@ -1245,7 +1251,7 @@ class TaskHandle:
                             timeout, self._last_status or "queued",
                             self._retry_attempts, self._client.max_task_retries,
                         )
-                        self._cancel_remote()
+                        self._cancel_remote("infra_retry")
                         self.task_id = await self._resubmit(
                             self.task_id, self._retry_attempts + 1,
                         )
