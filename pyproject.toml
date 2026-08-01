@@ -1,6 +1,6 @@
 [project]
 name = "krauncher"
-version = "0.2.4"
+version = "0.2.5"
 description = "Run Python functions and notebook cells on the cheapest suitable remote GPU — per-task billing, no instances"
 readme = "README.md"
 license = { text = "MIT" }
