@@ -4,7 +4,7 @@ version = "0.2.6"
 description = "Run Python functions and notebook cells on the cheapest suitable remote GPU — per-task billing, no instances"
 readme = "README.md"
 license = { text = "MIT" }
-authors = [{ name = "Ilya Sergeev" }]
+authors = [{ name = "Ilya Sergeev", email = "package@krauncher.com" }]
 keywords = ["gpu", "cloud", "machine-learning", "remote-execution", "task", "jupyter"]
 classifiers = [
     "Development Status :: 4 - Beta",
