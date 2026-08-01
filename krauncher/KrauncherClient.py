@@ -116,18 +116,19 @@ class KrauncherClient:
     All parameters can be set via environment variables (or ``.env`` file in CWD).
     Explicit constructor arguments always take priority.
 
-    ================ ====================== ==========================================
-    Parameter        Env var                Default
-    ================ ====================== ==========================================
-    api_key          CAS_API_KEY            (required)
-    broker_url       CAS_BROKER_URL         https://krauncher.com/api
-    analyzer_timeout CAS_ANALYZER_TIMEOUT   10.0
-    gpu_name         KRAUNCHER_GPU_NAME     ""
-    gpu_arch         KRAUNCHER_GPU_ARCH     ""
-    (task vram_gb)   KRAUNCHER_VRAM_GB      "" (overrides @task(vram_gb=...))
-    estimate_only    CAS_ESTIMATE_ONLY      false
-    max_task_retries CAS_MAX_TASK_RETRIES   3
-    ================ ====================== ==========================================
+    ================== ====================== ========================================
+    Parameter          Env var                Default
+    ================== ====================== ========================================
+    api_key            CAS_API_KEY            (required)
+    broker_url         CAS_BROKER_URL         https://krauncher.com/api
+    analyzer_timeout   CAS_ANALYZER_TIMEOUT   10.0
+    gpu_name           KRAUNCHER_GPU_NAME     ""
+    gpu_arch           KRAUNCHER_GPU_ARCH     ""
+    (task vram_gb)     KRAUNCHER_VRAM_GB      "" (overrides @task(vram_gb=...))
+    estimate_only      CAS_ESTIMATE_ONLY      false
+    max_task_retries   CAS_MAX_TASK_RETRIES   3
+    max_task_chain_sec CAS_MAX_TASK_CHAIN_SEC 0 (= 2x the task's timeout)
+    ================== ====================== ========================================
 
     Analyzer URL is resolved from the broker (``GET /v1/me → analyzer_url``).
     Configure analyzer endpoints in the admin panel.
@@ -161,6 +162,7 @@ class KrauncherClient:
         stream_stderr: bool | None = None,
         send_credentials: bool | None = None,
         max_task_retries: int | None = None,
+        max_task_chain_sec: float | None = None,
     ) -> None:
         self.api_key = api_key or os.environ.get("CAS_API_KEY", "")
         if not self.api_key:
@@ -217,6 +219,17 @@ class KrauncherClient:
             self.max_task_retries = max_task_retries
         else:
             self.max_task_retries = int(os.environ.get("CAS_MAX_TASK_RETRIES", "3"))
+
+        # Wall-clock ceiling on a whole chain of attempts, in seconds. The
+        # attempt counter alone does not bound how long the caller waits: with
+        # max_task_retries=3 a chain could run 4x the task's own timeout.
+        # 0 means "derive from the timeout" — see _chain_budget().
+        if max_task_chain_sec is not None:
+            self.max_task_chain_sec = float(max_task_chain_sec)
+        else:
+            self.max_task_chain_sec = float(
+                os.environ.get("CAS_MAX_TASK_CHAIN_SEC", "0")
+            )
 
         # Broker config cache (populated by _fetch_broker_config)
         self._config_cache: dict[str, Any] | None = None

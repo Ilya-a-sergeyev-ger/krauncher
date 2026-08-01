@@ -932,6 +932,10 @@ class TaskHandle:
 
         loop = asyncio.get_event_loop()
         deadline = loop.time() + timeout
+        # Ceiling on the whole chain of attempts, fixed at the first submit:
+        # retries must not keep the caller waiting without bound.
+        chain_budget = self._client.max_task_chain_sec or (2 * timeout)
+        chain_deadline = loop.time() + chain_budget
         delay = 0.5
         relay_task: asyncio.Task | None = None
 
@@ -1147,7 +1151,11 @@ class TaskHandle:
                     msg = data.get("message", "") or status_now
                     max_retries = self._client.max_task_retries
 
-                    if self._resubmit is not None and self._retry_attempts < max_retries:
+                    if (
+                        self._resubmit is not None
+                        and self._retry_attempts < max_retries
+                        and loop.time() < chain_deadline
+                    ):
                         self._retry_attempts += 1
                         logger.info(
                             "Infrastructure failure (%s), retrying %d/%d: %s",
@@ -1158,9 +1166,9 @@ class TaskHandle:
                             self.task_id, self._retry_attempts + 1,
                         )
                         self._reset_for_retry()
-                        # The retry budget is the attempt counter, not wall
-                        # clock: each attempt gets the full timeout again.
-                        deadline = loop.time() + timeout
+                        # Each attempt gets the full timeout again, but never
+                        # past the chain's wall-clock ceiling.
+                        deadline = min(loop.time() + timeout, chain_deadline)
                         delay = 0.5
                         continue
 
@@ -1243,6 +1251,7 @@ class TaskHandle:
                         not self._reached_executing
                         and self._resubmit is not None
                         and self._retry_attempts < self._client.max_task_retries
+                        and loop.time() < chain_deadline
                     ):
                         self._retry_attempts += 1
                         logger.info(
@@ -1256,9 +1265,21 @@ class TaskHandle:
                             self.task_id, self._retry_attempts + 1,
                         )
                         self._reset_for_retry()
-                        deadline = loop.time() + timeout
+                        deadline = min(loop.time() + timeout, chain_deadline)
                         delay = 0.5
                         continue
+                    # A chain that ran out of wall clock never delivered a
+                    # result either, but the cause is ours, not the task's.
+                    if self._retry_attempts and loop.time() >= chain_deadline:
+                        self._cancel_remote("infra_retry")
+                        raise RetriesExhausted(
+                            task_id=self.task_id,
+                            status=self._last_status or "queued",
+                            attempts=self._retry_attempts,
+                            message=(
+                                f"chain wall-clock budget of {chain_budget:.0f}s exhausted"
+                            ),
+                        )
                     raise TaskTimeout(self.task_id, timeout)
 
                 await asyncio.sleep(min(delay, remaining))

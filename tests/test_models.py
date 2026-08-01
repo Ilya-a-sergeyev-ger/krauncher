@@ -86,6 +86,7 @@ def _make_handle(task_id: str = "test-task-1") -> TaskHandle:
     mock_client = type("MockClient", (), {
         "api_key": "cas_test",
         "broker_url": "http://localhost:8000",
+        "max_task_chain_sec": 0.0,
     })()
     return TaskHandle(task_id=task_id, client=mock_client)
 
