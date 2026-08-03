@@ -88,4 +88,11 @@ __all__ = [
     "ValueTransferError",
 ]
 
-__version__ = "0.2.1"
+# Read from the installed distribution rather than kept by hand: this string
+# sat at 0.2.1 through six releases because nothing made it move.
+try:
+    from importlib.metadata import PackageNotFoundError, version as _pkg_version
+
+    __version__ = _pkg_version("krauncher")
+except (ImportError, PackageNotFoundError):  # running from a source tree
+    __version__ = "unknown"
