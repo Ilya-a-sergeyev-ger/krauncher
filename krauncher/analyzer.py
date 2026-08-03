@@ -13,10 +13,12 @@ from __future__ import annotations
 import base64
 import logging
 import math
+import os
 from dataclasses import dataclass, field
 
 import httpx
 
+from ._env import setting
 from .crypto import generate_keypair, derive_shared_secret, encrypt
 
 logger = logging.getLogger("krauncher.analyzer")
@@ -127,7 +129,41 @@ class TaskClassification:
 # task is never scheduled onto a card it only just fits (real cards deliver
 # below their nominal VRAM, and the estimate itself carries uncertainty). Same
 # factor on both the explicit pin and the analyzer's auto-classified estimate.
-_VRAM_HEADROOM = 1.1
+#
+# The default is small because the analyzed path is padded twice before it gets
+# here: the estimate already carries 15% for CUDA context and framework, and the
+# reported requirement is held below the card's ceiling. A Qwen3-VL-8B run
+# measured at 17.4 GB was estimated at 20.8, reported as 21, and a third 10% pad
+# turned that into 24 — excluding every 23 GB card for a job with 3.5 GB spare.
+_VRAM_HEADROOM_DEFAULT = 1.05
+_VRAM_HEADROOM_ENV = "KRAUNCHER_VRAM_HEADROOM"  # CAS_VRAM_HEADROOM also read
+
+
+def vram_headroom() -> float:
+    """Safety factor for every VRAM requirement, overridable per environment.
+
+    Set ``KRAUNCHER_VRAM_HEADROOM`` in the environment or in the .env the client
+    already loads — raise it if your jobs allocate more than the estimate
+    predicts, lower it (down to 1.0) to squeeze onto smaller cards. Read on
+    every call so a value set after import still applies.
+
+    Anything unparseable or below 1.0 is ignored: asking for less VRAM than the
+    estimate is not a headroom setting, it is a way to OOM.
+    """
+    raw = setting("VRAM_HEADROOM")
+    if not raw:
+        return _VRAM_HEADROOM_DEFAULT
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning("%s=%r is not a number — using %.2f",
+                       _VRAM_HEADROOM_ENV, raw, _VRAM_HEADROOM_DEFAULT)
+        return _VRAM_HEADROOM_DEFAULT
+    if value < 1.0:
+        logger.warning("%s=%s is below 1.0 — using %.2f",
+                       _VRAM_HEADROOM_ENV, raw, _VRAM_HEADROOM_DEFAULT)
+        return _VRAM_HEADROOM_DEFAULT
+    return value
 
 
 def _vram_to_tier(vram_gb: int) -> str:
@@ -145,7 +181,7 @@ def _vram_to_tier(vram_gb: int) -> str:
 
 def classify_explicit(vram_gb: int) -> TaskClassification:
     """Level 1: user explicitly set vram_gb. Add safety headroom."""
-    effective = math.ceil(vram_gb * _VRAM_HEADROOM)
+    effective = math.ceil(vram_gb * vram_headroom())
     return TaskClassification(
         min_vram_gb=effective,
         tier=_vram_to_tier(effective),
@@ -297,7 +333,7 @@ class AnalyzerClient:
         raw_vram_gb = hw.get("min_vram_gb", 24)
         # Same safety headroom as the explicit path (classify_explicit); 0 = CPU
         # task stays 0.
-        min_vram_gb = math.ceil(raw_vram_gb * _VRAM_HEADROOM)
+        min_vram_gb = math.ceil(raw_vram_gb * vram_headroom())
         method = hw.get("analysis_method", "ast")
         confidence = hw.get("confidence", 0.6)
 

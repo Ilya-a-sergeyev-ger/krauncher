@@ -147,7 +147,7 @@ class RetriesExhausted(KrauncherError):
     The task never ran to completion: each attempt died for a reason the
     broker flagged as our fault (host lost, no capacity, ...). ``status``
     carries the last one. Raise the retry budget via
-    ``KrauncherClient(max_task_retries=...)`` / ``CAS_MAX_TASK_RETRIES``.
+    ``KrauncherClient(max_task_retries=...)`` / ``KRAUNCHER_MAX_TASK_RETRIES``.
     """
 
     def __init__(self, task_id: str, status: str, attempts: int, message: str = "") -> None:

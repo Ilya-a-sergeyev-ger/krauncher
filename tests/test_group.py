@@ -60,7 +60,7 @@ def test_group_vram_floor_from_explicit_pins():
         return x
 
     grp = asyncio.run(client.group(small, big))
-    assert grp.vram_floor == math.ceil(30 * 1.1)  # same headroom as single-task pins
+    assert grp.vram_floor == math.ceil(30 * 1.05)  # same headroom as single-task pins
     assert grp.group_id.startswith("kr-")
 
 
@@ -79,7 +79,7 @@ def test_group_classifies_unpinned_members():
 
     grp = asyncio.run(client.group(auto, pinned))
     client._classify.assert_called_once()
-    assert grp.vram_floor == 8  # classified 8 > ceil(2*1.1)=3
+    assert grp.vram_floor == 8  # classified 8 > ceil(2*1.05)=3
 
 
 def test_group_conflicting_pins_raise():

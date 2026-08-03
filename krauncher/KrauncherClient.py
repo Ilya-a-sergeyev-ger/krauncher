@@ -23,6 +23,7 @@ from .analyzer import (
     classify_safety_net,
 )
 from .credentials import collect_credentials
+from ._env import setting
 from .data_source import DataSource
 from .exceptions import KrauncherError, ValueTransferError
 from .models import Runner, TaskGroup, TaskHandle, _check_response
@@ -34,7 +35,7 @@ class _EstimateStub:
 
     Any attribute/item access, call or arithmetic yields another stub; formats
     as 0 for numeric specs. Lets result-printing script code after a skipped
-    submission run through unchanged in CAS_ESTIMATE_ONLY dry runs.
+    submission run through unchanged in KRAUNCHER_ESTIMATE_ONLY dry runs.
     """
 
     # Happy-path values for status-like attributes, so script guards
@@ -119,15 +120,17 @@ class KrauncherClient:
     ================== ====================== ========================================
     Parameter          Env var                Default
     ================== ====================== ========================================
-    api_key            CAS_API_KEY            (required)
-    broker_url         CAS_BROKER_URL         https://krauncher.com/api
-    analyzer_timeout   CAS_ANALYZER_TIMEOUT   10.0
+    api_key            KRAUNCHER_API_KEY            (required)
+    broker_url         KRAUNCHER_BROKER_URL         https://krauncher.com/api
+    analyzer_timeout   KRAUNCHER_ANALYZER_TIMEOUT   10.0
     gpu_name           KRAUNCHER_GPU_NAME     ""
     gpu_arch           KRAUNCHER_GPU_ARCH     ""
     (task vram_gb)     KRAUNCHER_VRAM_GB      "" (overrides @task(vram_gb=...))
-    estimate_only      CAS_ESTIMATE_ONLY      false
-    max_task_retries   CAS_MAX_TASK_RETRIES   3
-    max_task_chain_sec CAS_MAX_TASK_CHAIN_SEC 0 (= 2x the task's timeout)
+    estimate_only      KRAUNCHER_ESTIMATE_ONLY      false
+    max_task_retries   KRAUNCHER_MAX_TASK_RETRIES   3
+    max_task_chain_sec KRAUNCHER_MAX_TASK_CHAIN_SEC 0 (= 2x the task's timeout)
+
+    The original CAS_ spelling of every name above still works.
     ================== ====================== ========================================
 
     Analyzer URL is resolved from the broker (``GET /v1/me → analyzer_url``).
@@ -164,14 +167,14 @@ class KrauncherClient:
         max_task_retries: int | None = None,
         max_task_chain_sec: float | None = None,
     ) -> None:
-        self.api_key = api_key or os.environ.get("CAS_API_KEY", "")
+        self.api_key = api_key or setting("API_KEY")
         if not self.api_key:
             raise KrauncherError(
                 "Missing API key. Pass api_key=... to KrauncherClient(), or set "
-                "the CAS_API_KEY environment variable (e.g. in a .env file). "
+                "the KRAUNCHER_API_KEY environment variable (e.g. in a .env file). "
                 "Generate a key at https://krauncher.com → Account → API Keys."
             )
-        self.broker_url = (broker_url or os.environ.get("CAS_BROKER_URL", "https://krauncher.com/api")).rstrip("/")
+        self.broker_url = (broker_url or setting("BROKER_URL", "https://krauncher.com/api")).rstrip("/")
 
         # Task E2E encryption is mandatory — the broker rejects plaintext
         # submissions. There is no opt-out. The /estimate analyzer call is
@@ -181,25 +184,25 @@ class KrauncherClient:
         # The constructor parameter is kept only for tests / edge cases.
         self._analyzer_url_override = analyzer_url if analyzer_url is not _UNSET else None
 
-        self._analyzer_timeout = analyzer_timeout or float(os.environ.get("CAS_ANALYZER_TIMEOUT", "10.0"))
+        self._analyzer_timeout = analyzer_timeout or float(setting("ANALYZER_TIMEOUT", "10.0"))
         self._analyzer_client: AnalyzerClient | None = None
 
         # Default GPU requirements from client config
-        self.default_gpu_name = gpu_name or os.environ.get("KRAUNCHER_GPU_NAME", "")
-        self.default_gpu_arch = gpu_arch or os.environ.get("KRAUNCHER_GPU_ARCH", "")
+        self.default_gpu_name = gpu_name or setting("GPU_NAME")
+        self.default_gpu_arch = gpu_arch or setting("GPU_ARCH")
 
         # Estimate-only mode: run analyzer, return classification, skip broker submission.
         if estimate_only is not None:
             self.estimate_only = estimate_only
         else:
-            self.estimate_only = os.environ.get("CAS_ESTIMATE_ONLY", "false").lower() in ("1", "true", "yes")
+            self.estimate_only = setting("ESTIMATE_ONLY", "false").lower() in ("1", "true", "yes")
 
         # Stream stderr from worker to client via relay (worker emits type=stderr,
         # wait() auto-prints to sys.stderr when no on_log is provided).
         if stream_stderr is not None:
             self.stream_stderr = stream_stderr
         else:
-            self.stream_stderr = os.environ.get("CAS_STREAM_STDERR", "false").lower() in ("1", "true", "yes")
+            self.stream_stderr = setting("STREAM_STDERR", "false").lower() in ("1", "true", "yes")
 
         # Storage credentials are read from this process's environment and sent
         # to the worker inside the E2E payload. Off means a task with private
@@ -207,8 +210,8 @@ class KrauncherClient:
         if send_credentials is not None:
             self.send_credentials = send_credentials
         else:
-            self.send_credentials = os.environ.get(
-                "CAS_SEND_CREDENTIALS", "true",
+            self.send_credentials = setting(
+                "SEND_CREDENTIALS", "true",
             ).lower() not in ("0", "false", "no")
 
         # How many times wait() transparently resubmits a task whose failure
@@ -218,7 +221,7 @@ class KrauncherClient:
         if max_task_retries is not None:
             self.max_task_retries = max_task_retries
         else:
-            self.max_task_retries = int(os.environ.get("CAS_MAX_TASK_RETRIES", "3"))
+            self.max_task_retries = int(setting("MAX_TASK_RETRIES", "3"))
 
         # Wall-clock ceiling on a whole chain of attempts, in seconds. The
         # attempt counter alone does not bound how long the caller waits: with
@@ -227,9 +230,7 @@ class KrauncherClient:
         if max_task_chain_sec is not None:
             self.max_task_chain_sec = float(max_task_chain_sec)
         else:
-            self.max_task_chain_sec = float(
-                os.environ.get("CAS_MAX_TASK_CHAIN_SEC", "0")
-            )
+            self.max_task_chain_sec = float(setting("MAX_TASK_CHAIN_SEC", "0"))
 
         # Broker config cache (populated by _fetch_broker_config)
         self._config_cache: dict[str, Any] | None = None
@@ -641,7 +642,7 @@ class KrauncherClient:
         """
         client = self
         # Env override for the declared VRAM class (see task() docstring).
-        _vram_env = os.environ.get("KRAUNCHER_VRAM_GB", "")
+        _vram_env = setting("VRAM_GB")
         if _vram_env:
             vram_gb = int(_vram_env)
 
