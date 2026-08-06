@@ -65,7 +65,10 @@ env vars / a `.env` file in CWD.
 | `estimate_only`     | `CAS_ESTIMATE_ONLY`    | `false`                  | Run analyzer, return classification, skip submission |
 | `stream_stderr`     | `CAS_STREAM_STDERR`    | `false`                  | Stream worker stderr to client            |
 | `max_task_retries`  | `CAS_MAX_TASK_RETRIES` | `3`                      | Transparent resubmits after an infrastructure failure (0 disables) |
+| `max_task_chain_sec`| `CAS_MAX_TASK_CHAIN_SEC` | `0`                    | Wall-clock ceiling on a retry chain; `0` = twice the task's `timeout` |
+| `send_credentials`  | `CAS_SEND_CREDENTIALS` | `true`                   | Attach your storage keys to the encrypted payload (see below) |
 | —                   | `KRAUNCHER_VRAM_GB`    | `""`                     | Overrides `@task(vram_gb=...)` — re-targets existing tasks to another VRAM class without editing them |
+| —                   | `KRAUNCHER_VRAM_HEADROOM` | `1.05`                | Safety factor on every VRAM requirement, explicit and auto-classified. Values below 1.0 are ignored |
 | —                   | `CAS_CLIENT_CONFIG`    | `.env` in CWD            | Path to the config file to load; must be a real env var, not a key inside that file |
 | —                   | `KRAUNCHER_DEBUG`      | `false`                  | Verbose client logging                    |
 
@@ -73,6 +76,14 @@ env vars / a `.env` file in CWD.
 to the worker, the broker rejects plaintext submissions, and there is no opt-out
 switch. The `/estimate` call to the analyzer is also always E2E-encrypted, with
 no plaintext fallback.
+
+**Storage credentials go to the worker, not to us.** The keys a task needs for
+its own S3 bucket or a private HuggingFace repo are read from your environment
+(`AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY`, optional `AWS_REGION` /
+`AWS_ENDPOINT_URL`; `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN`) and travel sealed
+inside the same encrypted payload as the code — the broker never sees them, and
+nothing is stored. Partial S3 credentials are skipped rather than sent.
+`CAS_SEND_CREDENTIALS=false` attaches none at all.
 
 Relay transport (`KRAUNCHER_RELAY_TLS`, `KRAUNCHER_RELAY_CA`,
 `KRAUNCHER_RELAY_AUTHORITY`) is negotiated automatically — the broker
@@ -183,6 +194,24 @@ result.download("received")     # write them under ./received, returns the count
 
 ---
 
+## Analysis and execution are separate phases
+
+Every submission is analysis (classify the code, price it) then execution
+(encrypt, submit, run). They can be split:
+
+| Want | Call |
+|---|---|
+| Classify a code block, run it later without re-analysis | `estimate_code(code, ...)` → `run_code(code, ..., classification=...)` |
+| Size a whole sequence before submitting anything | `await client.group(task_a, task_b)` |
+| Analyze everything, submit nothing | `estimate_only=True` / `CAS_ESTIMATE_ONLY` |
+| Per-GPU predicted time and cost, before any client call | `POST /api/estimate` (see below) |
+
+A decorated `@client.task` function classifies once and reuses that result for
+every later call, but its classification cannot be passed in or out — reuse
+across processes is a `run_code` capability.
+
+---
+
 ## Running a code block — `run_code` (values API)
 
 `@client.task` wraps a *function*. `run_code` runs a *code string* (a notebook
@@ -284,7 +313,7 @@ h2 = await group.submit(train_phase2, epochs=3)           # reuses phase-1 worke
 ```
 
 The envelope is: VRAM floor = max over members (explicit `vram_gb` pins get the
-usual 10% headroom); `gpu_name` / `gpu_arch` / `provider` shared — **conflicting
+usual VRAM headroom); `gpu_name` / `gpu_arch` / `provider` shared — **conflicting
 explicit pins raise**; disk = max member `disk_gb` + total size of all members'
 data sources / volumes. Fields: `group.group_id`, `group.vram_floor`,
 `group.disk_gb`. Tutorial 52.

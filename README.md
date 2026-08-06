@@ -150,6 +150,11 @@ it doesn't have the keys.
 | Your model weights/outputs | No                   |
 | Job timing and GPU type    | Yes                  |
 
+Storage keys are part of that: the S3 / HuggingFace credentials a task needs
+(`AWS_*`, `HF_TOKEN`) are read from your environment and travel sealed inside
+the same payload as the code, straight to the worker. Set
+`CAS_SEND_CREDENTIALS=false` to attach none.
+
 This isn't a feature we added. It's a consequence of not wanting to be in
 the data custody business. E2E encryption is mandatory — there is no opt-out.
 
@@ -194,6 +199,16 @@ For larger or registered datasets, use the **data bridge** (`data_urls=` /
   shared-requirements envelope (VRAM floor, GPU pins, disk) from the tasks and
   keeps them on one warm worker; submit with `await group.submit(task, ...)`.
   See [tutorial/52](tutorial/52_group_envelope.py).
+- **Files in, files out.** Pass `files={"input.csv": b"..."}` when calling the
+  task and set `artifacts=True` to get back what it wrote beside itself
+  (`result.artifacts`, `result.download("received")`). Both directions ride the
+  encrypted payload — no storage to configure. See
+  [tutorial/54](tutorial/54_artifact_roundtrip.py).
+- **Price it before you run it.** Analysis and execution are separate phases:
+  `await client.estimate_code(code, ...)` returns the classification without
+  submitting, and `run_code(code, ..., classification=...)` then executes
+  without a second analysis. `CAS_ESTIMATE_ONLY=true` does the same for
+  decorated tasks; `POST /api/estimate` returns per-GPU predicted time and cost.
 
 ---
 
@@ -247,6 +262,7 @@ Numbered, runnable tutorials in [`tutorial/`](tutorial/):
 | 50  | `50_run_code_values.py`           | `run_code` with named in/out values           |
 | 52  | `52_group_envelope.py`            | `client.group()` multi-phase envelope         |
 | 53  | `53_hf_native.py`                 | HuggingFace-native auto pre-fetch             |
+| 54  | `54_artifact_roundtrip.py`        | Files in / artifacts out                      |
 
 ---
 
