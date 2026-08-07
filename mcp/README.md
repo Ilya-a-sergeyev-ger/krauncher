@@ -1,5 +1,7 @@
 # krauncher-mcp
 
+<!-- mcp-name: io.github.Ilya-a-sergeyev-ger/krauncher-mcp -->
+
 An MCP server that gives an agent **one tool**: a pre-run cost estimate for a
 GPU task, from static analysis of the code. The code is **never executed**.
 

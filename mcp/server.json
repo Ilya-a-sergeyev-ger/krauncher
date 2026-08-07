@@ -1,0 +1,30 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.Ilya-a-sergeyev-ger/krauncher-mcp",
+  "title": "Krauncher analyzer",
+  "description": "Pre-run cost estimate for a GPU task from static analysis of the code — compute/setup/io seconds on a reference card, VRAM/disk needs, and what the analyzer read. The code is never executed.",
+  "repository": {
+    "url": "https://github.com/Ilya-a-sergeyev-ger/krauncher",
+    "source": "github"
+  },
+  "version": "0.1.1",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "krauncher-mcp",
+      "version": "0.1.1",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "CAS_API_KEY",
+          "description": "Krauncher API key for the analyzer (get one at https://krauncher.com). The server runs locally and calls the analyzer with this key.",
+          "isRequired": true,
+          "isSecret": true,
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}
