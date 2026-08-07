@@ -23,6 +23,8 @@ from mcp.server.mcpserver import MCPServer
 
 from krauncher import KrauncherClient
 
+from . import __version__
+
 # Keep the closed core off the server's stderr. The analyzer logs its CU
 # derivation — including calibration K-coefficients — at DEBUG, and the HTTP
 # client logs the internal analyzer address; a host may surface a server's
@@ -34,7 +36,7 @@ for _noisy in ("krauncher", "httpx", "httpcore"):
 # one string — the whole contract is expressed on this card.
 REFERENCE_CARD = "RTX PRO 6000 WS"
 
-mcp = MCPServer("krauncher-analyzer")
+mcp = MCPServer("krauncher-analyzer", version=__version__)
 
 _client: KrauncherClient | None = None
 
@@ -73,6 +75,13 @@ async def estimate(code: str) -> dict:
     spending any GPU time. The code is analyzed, never executed. Edit the run
     (card, precision, batch size, sequence length), re-estimate, keep the
     cheaper one, repeat — the whole loop costs no GPU-seconds.
+
+    The seconds are a RELATIVE signal for comparing code against code, not an
+    absolute forecast. They are normalized to a fixed reference card (RTX PRO
+    6000 WS) so two estimates are comparable; the real GPU and host the code
+    ends up running on will differ, so never read a second-count as the
+    wall-clock you will actually get. Compare variant-to-variant, not to the
+    clock. (Early 0.x release — the model is approximate and evolving.)
 
     Returns, on the reference card (RTX PRO 6000 WS):
       - compute_sec / setup_sec / io_sec: the three phases of wall time

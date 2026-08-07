@@ -7,6 +7,13 @@ It wraps the Krauncher *analyzer* (the assay), not the broker — there is no
 dispatch, no execution, no market lineup. Just: how long will this cost, and
 what does it need to run.
 
+**The seconds are a relative signal for comparing code against code, not an
+absolute forecast.** They are normalized to a fixed reference card (RTX PRO 6000
+WS) so two estimates are comparable; the GPU and host your code actually runs on
+will differ, so never read a second-count as the wall-clock you will get.
+Compare variant-to-variant. This is an early **0.x** release — the model is
+approximate and evolving.
+
 ## The `estimate` tool
 
 Input: `code` — the task's Python source (a self-contained function; a
