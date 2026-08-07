@@ -5,7 +5,7 @@ description = "MCP server: a pre-run GPU-task cost estimate (compute/setup/io on
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [{ name = "Ilya Sergeev" }]
+authors = [{ name = "Ilya Sergeev", email = "package@krauncher.com" }]
 keywords = ["mcp", "gpu", "cost-estimate", "krauncher", "llm-agent"]
 dependencies = [
     "mcp>=2.0",
