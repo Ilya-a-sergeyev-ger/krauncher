@@ -1,6 +1,6 @@
 [project]
 name = "krauncher"
-version = "0.2.8"
+version = "0.2.9"
 description = "Run Python functions and notebook cells on the cheapest suitable remote GPU — per-task billing, no instances"
 readme = "README.md"
 license = { text = "MIT" }
@@ -52,6 +52,11 @@ include = [
     "README.md",
     "LICENSE",
     "pyproject.toml",
+]
+# The bare globs above also match mcp/README.md and mcp/pyproject.toml — the
+# MCP server is its own package, keep it out of the krauncher sdist.
+exclude = [
+    "mcp",
 ]
 
 [tool.ruff]
