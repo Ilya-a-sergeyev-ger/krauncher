@@ -28,6 +28,11 @@ logger = logging.getLogger("krauncher.analyzer")
 # TaskClassification dataclass
 # ---------------------------------------------------------------------------
 
+# The analyzer floors a task's disk requirement at this many GB; also the
+# client-side default when no analyzer disk figure is available.
+_DISK_FLOOR_GB = 10
+
+
 @dataclass
 class TaskClassification:
     min_vram_gb: int
@@ -35,6 +40,7 @@ class TaskClassification:
     confidence: float                # 0.0–1.0
     analysis_method: str             # "explicit" | "ast" | "ast+llm" | "safety_net"
     cpu_only: bool = False           # task makes no use of the GPU (analyzer flag)
+    min_disk_gb: int = _DISK_FLOOR_GB  # disk requirement (GB); analyzer's disk floor
     compute_units: float | None = None
     cu_compute: float | None = None           # compute phase CU (GPU + DataLoader pipeline)
     cu_io: float | None = None                # IO phase CU (model/dataset download + pip)
@@ -373,6 +379,7 @@ class AnalyzerClient:
 
         return TaskClassification(
             min_vram_gb=min_vram_gb,
+            min_disk_gb=hw.get("min_disk_gb", _DISK_FLOOR_GB),
             tier=_vram_to_tier(min_vram_gb),
             confidence=confidence,
             analysis_method=method,
