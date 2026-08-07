@@ -9,9 +9,8 @@ authors = [{ name = "Ilya Sergeev", email = "package@krauncher.com" }]
 keywords = ["mcp", "gpu", "cost-estimate", "krauncher", "llm-agent"]
 dependencies = [
     "mcp>=2.0",
-    # The analyzer client. Installed from the parent cas-client checkout
-    # (`pip install -e ..`) or from PyPI once published.
-    "krauncher",
+    # The analyzer client — 0.2.9 first exposed min_disk_gb as a top-level field.
+    "krauncher>=0.2.9",
 ]
 
 [project.scripts]

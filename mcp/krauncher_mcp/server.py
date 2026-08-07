@@ -119,19 +119,19 @@ async def estimate(code: str) -> dict:
     compute_sec = max(cu_total - cu_io - cu_setup, 0.0) / 1000.0
 
     extra = d.get("extra_debug") or {}
-    # RAW requirements (no headroom margin): the analyzer's top-level min_vram_gb
-    # carries a +1 safety margin; the un-margined detection lives in extra_debug.
-    raw_vram = extra.get("min_vram_gb", d.get("min_vram_gb"))
-    # min_disk_gb is un-margined already; it lives in extra_debug, not top-level.
-    raw_disk = extra.get("min_disk_gb", d.get("min_disk_gb"))
+    # Both requirements come from top-level classification fields (krauncher
+    # >=0.2.9), so they are present and consistent on every path — including the
+    # safety-net fallback, where disk is the analyzer's floor rather than null.
+    min_vram = d.get("min_vram_gb")
+    min_disk = d.get("min_disk_gb")
 
     return {
         "reference_card": REFERENCE_CARD,
         "compute_sec": round(compute_sec, 1),
         "setup_sec": round(cu_setup / 1000.0, 1),
         "io_sec": round(cu_io / 1000.0, 1),
-        "min_vram_gb": raw_vram,
-        "min_disk_gb": raw_disk,
+        "min_vram_gb": min_vram,
+        "min_disk_gb": min_disk,
         "confidence": d.get("confidence"),
         "analysis_method": d.get("analysis_method"),
         "cpu_only": bool(d.get("cpu_only", False)),
