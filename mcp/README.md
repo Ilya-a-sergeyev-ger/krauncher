@@ -57,10 +57,13 @@ weights. Only what the analyzer detected in the code leaves the server.
 pip install -e .        # from this directory; also installs the analyzer client
 ```
 
-The server needs an API key for the analyzer, in the environment:
+An API key is **optional**. Without one the server calls the public analyzer
+**keyless**, under a per-IP daily quota (when the quota is reached, `estimate`
+returns a short note to register for a larger one). Set a key to use your own
+account and skip the quota:
 
 ```sh
-export CAS_API_KEY=cas_...
+export CAS_API_KEY=cas_...   # optional
 ```
 
 Verify it works without wiring up a client — runs `estimate` on a sample task
@@ -72,7 +75,20 @@ krauncher-mcp --selftest
 
 ## Wire it into an MCP client
 
-stdio transport; the console script is `krauncher-mcp`.
+stdio transport; the console script is `krauncher-mcp`. No key needed — this runs
+keyless against the public analyzer:
+
+```jsonc
+{
+  "mcpServers": {
+    "krauncher-analyzer": {
+      "command": "krauncher-mcp"
+    }
+  }
+}
+```
+
+To use your own account (keyed, exempt from the per-IP quota), add the key:
 
 ```jsonc
 {
@@ -84,6 +100,8 @@ stdio transport; the console script is `krauncher-mcp`.
   }
 }
 ```
+
+Self-hosting the analyzer? Override the endpoint with `KRAUNCHER_ANALYZER_URL`.
 
 ## Scope
 

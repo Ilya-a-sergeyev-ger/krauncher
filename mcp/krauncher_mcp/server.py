@@ -3,9 +3,10 @@
 """Krauncher analyzer MCP server.
 
 Exposes ONE tool, `estimate`: a pre-execution cost profile for a GPU task,
-from static analysis of the code (the code is never run). Wraps the client's
-`estimate_code` path — the analyzer, not the broker. No dispatch, no execution,
-no market lineup.
+from static analysis of the code (the code is never run). With a Krauncher API
+key it uses the keyed client; without one it calls the public analyzer keyless
+(subject to a per-IP daily quota). Either way it is the analyzer, not the
+broker — no dispatch, no execution, no market lineup.
 
 The reference card is the RTX PRO 6000 WS, the card CU is normalized to, so
 `compute_units / 1000 == seconds on that card`; the three phase times fall
@@ -18,10 +19,12 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import os
 
 from mcp.server.mcpserver import MCPServer
 
 from krauncher import KrauncherClient
+from krauncher.analyzer import AnalyzerClient
 
 from . import __version__
 
@@ -36,17 +39,61 @@ for _noisy in ("krauncher", "httpx", "httpcore"):
 # one string — the whole contract is expressed on this card.
 REFERENCE_CARD = "RTX PRO 6000 WS"
 
+# The public analyzer for keyless (no-key) use. Overridable for self-hosting.
+_DEFAULT_ANALYZER_URL = "https://analyzer.krauncher.com"
+
 mcp = MCPServer("krauncher-analyzer", version=__version__)
 
 _client: KrauncherClient | None = None
+_keyless: AnalyzerClient | None = None
 
 
-def _get_client() -> KrauncherClient:
+def _analyzer_url() -> str:
+    return os.environ.get("KRAUNCHER_ANALYZER_URL", _DEFAULT_ANALYZER_URL).rstrip("/")
+
+
+def _get_client() -> KrauncherClient | None:
+    """The keyed client, or None when no API key is configured (env or .env)."""
     global _client
     if _client is None:
-        # Reads CAS_API_KEY / KRAUNCHER_API_KEY (or a .env in CWD).
-        _client = KrauncherClient()
+        try:
+            # Reads CAS_API_KEY / KRAUNCHER_API_KEY (or a .env in CWD).
+            _client = KrauncherClient()
+        except Exception:
+            return None
     return _client
+
+
+def _get_keyless() -> AnalyzerClient:
+    """Keyless client for the public analyzer — no key, quota'd per IP."""
+    global _keyless
+    if _keyless is None:
+        ac = AnalyzerClient(analyzer_url=_analyzer_url(), token=None, timeout=30.0)
+        # Tag the surface (telemetry + AST-only routing on the analyzer). The
+        # client exposes no setter, so set the request header directly.
+        ac._headers["X-Client-Surface"] = "mcp"
+        _keyless = ac
+    return _keyless
+
+
+async def _classify(code: str):
+    """Keyed path when a key is configured, else the keyless public analyzer.
+    Both return a TaskClassification."""
+    client = _get_client()
+    if client is not None:
+        return await client.estimate_code(code)
+    return await _get_keyless().classify(code)
+
+
+def _error(msg: str) -> dict:
+    return {
+        "reference_card": REFERENCE_CARD,
+        "compute_sec": None, "setup_sec": None, "io_sec": None,
+        "min_vram_gb": None, "min_disk_gb": None,
+        "confidence": 0.0, "analysis_method": None, "cpu_only": None,
+        "findings": [],
+        "error": msg[:300],
+    }
 
 
 def _clean_findings(extra_debug: dict) -> list[str]:
@@ -100,16 +147,19 @@ async def estimate(code: str) -> dict:
             `@client.task`-decorated function is fine).
     """
     try:
-        cls = await _get_client().estimate_code(code)
+        cls = await _classify(code)
     except Exception as exc:  # best effort — hand the agent a usable shape
-        return {
-            "reference_card": REFERENCE_CARD,
-            "compute_sec": None, "setup_sec": None, "io_sec": None,
-            "min_vram_gb": None, "min_disk_gb": None,
-            "confidence": 0.0, "analysis_method": None, "cpu_only": None,
-            "findings": [],
-            "error": f"estimate unavailable: {type(exc).__name__}: {exc}"[:300],
-        }
+        resp = getattr(exc, "response", None)
+        if getattr(resp, "status_code", None) == 429:
+            # Keyless daily quota hit — surface the registration CTA verbatim.
+            try:
+                detail = (resp.json() or {}).get("detail")
+            except Exception:
+                detail = None
+            return _error(detail or (
+                "Anonymous daily limit reached — register free at "
+                "https://krauncher.com/?ref=mcp for a larger quota."))
+        return _error(f"estimate unavailable: {type(exc).__name__}: {exc}")
     d = dataclasses.asdict(cls)
 
     cu_total = d.get("compute_units") or 0.0
@@ -140,7 +190,8 @@ async def estimate(code: str) -> dict:
 
 
 # A tiny task used by `--selftest` to exercise the contract without an MCP
-# client (still hits the analyzer, so it needs CAS_API_KEY).
+# client. Works with or without a key: with CAS_API_KEY it uses the keyed path,
+# otherwise the keyless public analyzer (subject to the per-IP quota).
 _SELFTEST_CODE = """def finetune(batch_size: int = 16):
     from transformers import (AutoModelForSequenceClassification,
                               TrainingArguments)
