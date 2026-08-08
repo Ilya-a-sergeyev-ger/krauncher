@@ -57,7 +57,7 @@ def _get_client() -> KrauncherClient | None:
     global _client
     if _client is None:
         try:
-            # Reads CAS_API_KEY / KRAUNCHER_API_KEY (or a .env in CWD).
+            # Reads KRAUNCHER_API_KEY / CAS_API_KEY (or a .env in CWD).
             _client = KrauncherClient()
         except Exception:
             return None
@@ -190,7 +190,7 @@ async def estimate(code: str) -> dict:
 
 
 # A tiny task used by `--selftest` to exercise the contract without an MCP
-# client. Works with or without a key: with CAS_API_KEY it uses the keyed path,
+# client. Works with or without a key: with KRAUNCHER_API_KEY it uses the keyed path,
 # otherwise the keyless public analyzer (subject to the per-IP quota).
 _SELFTEST_CODE = """def finetune(batch_size: int = 16):
     from transformers import (AutoModelForSequenceClassification,

@@ -63,7 +63,7 @@ returns a short note to register for a larger one). Set a key to use your own
 account and skip the quota:
 
 ```sh
-export CAS_API_KEY=cas_...   # optional
+export KRAUNCHER_API_KEY=cas_...   # optional
 ```
 
 Verify it works without wiring up a client — runs `estimate` on a sample task
@@ -95,7 +95,7 @@ To use your own account (keyed, exempt from the per-IP quota), add the key:
   "mcpServers": {
     "krauncher-analyzer": {
       "command": "krauncher-mcp",
-      "env": { "CAS_API_KEY": "cas_..." }
+      "env": { "KRAUNCHER_API_KEY": "cas_..." }
     }
   }
 }

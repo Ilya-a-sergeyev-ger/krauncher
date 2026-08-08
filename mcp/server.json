@@ -18,9 +18,9 @@
       },
       "environmentVariables": [
         {
-          "name": "CAS_API_KEY",
-          "description": "Krauncher API key for the analyzer (get one at https://krauncher.com). The server runs locally and calls the analyzer with this key.",
-          "isRequired": true,
+          "name": "KRAUNCHER_API_KEY",
+          "description": "Optional Krauncher API key (get one at https://krauncher.com). Without it the server calls the public analyzer keyless, under a per-IP daily quota; with it, your keyed account is used and the quota is skipped.",
+          "isRequired": false,
           "isSecret": true,
           "format": "string"
         }
