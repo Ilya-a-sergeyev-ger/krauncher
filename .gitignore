@@ -12,3 +12,5 @@ calibration/
 /pp.py
 .env
 /received/
+
+*.sh
