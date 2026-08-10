@@ -597,7 +597,12 @@ def _unframe_result(plaintext: bytes) -> dict[str, Any]:
         size = entry["size"]
         files[entry["name"]] = body[offset:offset + size]
         offset += size
-    return {"output": header.get("output"), "artifacts": files}
+    return {
+        "output": header.get("output"),
+        "artifacts": files,
+        "stderr": header.get("stderr"),
+        "traceback": header.get("traceback"),
+    }
 
 
 def _fetch_relay_result_sync(
@@ -1230,7 +1235,12 @@ class TaskHandle:
 
                     # E2E: the output travels via the relay result mailbox,
                     # not the broker (which stores output=None for E2E tasks).
-                    if self._ek_priv is not None and data["status"] == "completed":
+                    # Failed tasks are fetched too — the broker blanks their
+                    # stderr and traceback, so the mailbox is the only place
+                    # the failure reason survives.
+                    if self._ek_priv is not None and data["status"] in (
+                        "completed", "failed",
+                    ):
                         await self._merge_relay_result(data)
 
                     self._check_artifacts_delivered()
@@ -1336,8 +1346,10 @@ class TaskHandle:
                 self._result,
                 output=envelope.get("output"),
                 artifacts=envelope.get("artifacts"),
+                stderr=envelope.get("stderr") or self._result.stderr,
+                traceback=envelope.get("traceback") or self._result.traceback,
             )
-        elif self._result.output is None:
+        elif self._result.status == "completed" and self._result.output is None:
             raise TaskError(
                 "Task completed but its result was not delivered from the "
                 "relay mailbox (retention expired, storage overflow, or the "
