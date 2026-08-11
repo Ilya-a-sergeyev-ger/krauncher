@@ -91,7 +91,7 @@ def _error(msg: str) -> dict:
         "compute_sec": None, "setup_sec": None, "io_sec": None,
         "min_vram_gb": None, "min_disk_gb": None,
         "confidence": 0.0, "analysis_method": None, "cpu_only": None,
-        "findings": [],
+        "knobs": [], "findings": [],
         "error": msg[:300],
     }
 
@@ -113,15 +113,95 @@ def _clean_findings(extra_debug: dict) -> list[str]:
     return out
 
 
+# Run parameters that move the time without changing what the code produces.
+# These are ALWAYS reported, detected or not: a knob the analyzer could not see
+# (value None) is itself the useful answer — the value is not a literal in the
+# source, so nothing can price it until it is one.
+_SAME_WORK_KNOBS = (
+    "num_workers",
+    "batch_size",
+    "gradient_accumulation_steps",
+)
+
+# Parameters that change the SIZE of the job — fewer epochs, fewer steps, a
+# shorter sequence. Reported only when found, because a lower number here buys a
+# smaller result rather than a cheaper one. Listing them as absent would invite
+# an agent to "save" by cutting the work.
+_WORK_KNOBS = (
+    "num_epochs",
+    "epochs",
+    "num_train_epochs",
+    "max_steps",
+    "seq_len",
+    "image_size",
+)
+
+# DataLoader worker counts arrive under whatever spelling the code used —
+# num_workers, dataloader_num_workers, n_workers, workers, nw. Mirrors the
+# analyzer's own rule so every spelling lands on one canonical knob name.
+_WORKER_ABBREV = frozenset({"nw", "n_w", "num_w"})
+
+
+def _is_worker_name(name: str) -> bool:
+    n = name.lower()
+    return n.endswith("workers") or n.startswith("num_wo") or n in _WORKER_ABBREV
+
+
+def _knobs(findings: list[str]) -> list[dict]:
+    """The run parameters to re-estimate, with the values found in the code.
+
+    A finding reads `name=value`, sometimes with a trailing note
+    (`image_size=224 from dataset default`). Names that are not knobs — the
+    model, the dataset, the optimizer — stay in `findings` and out of here.
+
+    Every same-work knob is listed whether or not it was found; `value: None`
+    means the analyzer did not see it as a literal in this code (it arrives as a
+    call argument, from a config, or from the environment), so it cannot be
+    priced until the code names it.
+    """
+    found: dict[str, str] = {}
+    for line in findings:
+        raw, sep, rest = line.partition("=")
+        raw, rest = raw.strip(), rest.strip()
+        if not sep or not rest or " " in raw:
+            continue
+        name = "num_workers" if _is_worker_name(raw) else raw
+        found.setdefault(name, rest.split()[0])
+
+    out = [
+        {"name": name, "value": found.get(name), "same_work": True}
+        for name in _SAME_WORK_KNOBS
+    ]
+    out += [
+        {"name": name, "value": found[name], "same_work": False}
+        for name in _WORK_KNOBS if name in found
+    ]
+    return out
+
+
 @mcp.tool()
 async def estimate(code: str) -> dict:
     """Get a GPU task's cost profile *before* running it, from static analysis.
 
     Call this whenever you are about to run a GPU job — a training or inference
     task — and want to know the cost, or to compare variants of the run before
-    spending any GPU time. The code is analyzed, never executed. Edit the run
-    (card, precision, batch size, sequence length), re-estimate, keep the
-    cheaper one, repeat — the whole loop costs no GPU-seconds.
+    spending any GPU time. The code is analyzed, never executed. Change a run
+    parameter, re-estimate, keep the cheaper one, repeat — the whole loop costs
+    no GPU-seconds.
+
+    The `knobs` field lists the run parameters worth re-estimating, so you do not
+    have to guess which ones the estimate responds to. Change their VALUES ONLY.
+    Do not restructure the job to make the number go down: not the model, not the
+    architecture, not the dataset, not the training procedure.
+
+    A knob with `value: null` was not visible to the analyzer — the value reaches
+    the job as a call argument, a config entry or an environment variable rather
+    than a literal in this source. Nothing can price it until the code states it,
+    so name it in the source and estimate again.
+
+    A knob with `same_work: false` (epochs, steps, sequence length) shrinks the
+    job itself — dropping it buys a smaller result, not a cheaper one. Report
+    that as a change of task, never as a saving.
 
     The seconds are a RELATIVE signal for comparing code against code, not an
     absolute forecast. They are normalized to a fixed reference card (RTX PRO
@@ -135,8 +215,10 @@ async def estimate(code: str) -> dict:
       - min_vram_gb / min_disk_gb: what the task needs to run at all
       - confidence (0-1) and analysis_method ("ast" | "llm"): how much to trust it
       - cpu_only: true when the task makes no use of the GPU
-      - findings: what the analyzer detected in the code (model, batch,
-        precision, sample count, ...)
+      - knobs: the run parameters found in this code, each with its current
+        value and `same_work` (see above) — the ones worth re-estimating
+      - findings: everything the analyzer detected in the code (model, dataset,
+        optimizer, batch, precision, sample count, ...)
 
     Even a rough, low-confidence, or partial estimate is useful — it never
     blocks. On any failure it returns the same shape with an `error` string and
@@ -174,6 +256,7 @@ async def estimate(code: str) -> dict:
     # safety-net fallback, where disk is the analyzer's floor rather than null.
     min_vram = d.get("min_vram_gb")
     min_disk = d.get("min_disk_gb")
+    findings = _clean_findings(extra)
 
     return {
         "reference_card": REFERENCE_CARD,
@@ -185,7 +268,8 @@ async def estimate(code: str) -> dict:
         "confidence": d.get("confidence"),
         "analysis_method": d.get("analysis_method"),
         "cpu_only": bool(d.get("cpu_only", False)),
-        "findings": _clean_findings(extra),
+        "knobs": _knobs(findings),
+        "findings": findings,
     }
 
 

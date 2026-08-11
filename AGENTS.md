@@ -426,6 +426,11 @@ PRO 6000 WS, the card CU is normalized to), not the per-GPU priced lineup that
   "min_vram_gb": 6, "min_disk_gb": 10,                     // what it needs to run
   "confidence": 1.0, "analysis_method": "ast",             // how much to trust it
   "cpu_only": false,
+  "knobs": [                                               // the run parameters to try
+    { "name": "num_workers", "value": null, "same_work": true },
+    { "name": "batch_size",  "value": "16", "same_work": true },
+    { "name": "num_epochs",  "value": "3",  "same_work": false }
+  ],
   "findings": ["batch_size=16", "Recognized model: BERT Base (0.11B params)"]
 }
 ```
@@ -434,6 +439,17 @@ The seconds are a **relative signal for comparing code against code** (fixed
 reference card), not the wall-clock on the GPU the task ends up on. Use it in the
 loop: edit the run → estimate → keep the cheaper variant → repeat, no GPU spent.
 For the priced per-GPU lineup, use `POST /api/estimate` above.
+
+`knobs` is the shortlist worth re-estimating, so you do not have to guess which
+parameters the estimate responds to. Change their **values only** — not the
+model, the architecture, the dataset, or the training procedure. The parameters
+that move the time without changing what the code produces are listed every
+time, found or not: `value: null` means the analyzer did not see it in the source
+(it arrives as a call argument, a config entry or an environment variable), so
+name it in the code and estimate again. `same_work: false` (epochs, steps,
+sequence length) marks a knob that shrinks the job itself — lowering it buys a
+smaller result, not a cheaper one, and belongs in the answer as a change of task
+rather than a saving.
 
 ---
 
