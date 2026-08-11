@@ -426,6 +426,8 @@ PRO 6000 WS, the card CU is normalized to), not the per-GPU priced lineup that
   "min_vram_gb": 6, "min_disk_gb": 10,                     // what it needs to run
   "confidence": 1.0, "analysis_method": "ast",             // how much to trust it
   "cpu_only": false,
+  "spread": 1.51, "spread_reason": "1.51x { cv_training, nw=one } on the compute phase, observed on 42 runs across 16 hosts (worst 2.45x)",
+  "calibration_basis": "calibrated",                       // | extrapolated | uncalibrated
   "knobs": [                                               // the run parameters to try
     { "name": "num_workers", "value": null, "same_work": true },
     { "name": "batch_size",  "value": "16", "same_work": true },
@@ -450,6 +452,19 @@ name it in the code and estimate again. `same_work: false` (epochs, steps,
 sequence length) marks a knob that shrinks the job itself — lowering it buys a
 smaller result, not a cheaper one, and belongs in the answer as a change of task
 rather than a saving.
+
+`spread` is a measured population factor, not a doubt about the reading: 1.51
+means the slow end of the hosts this shape was measured on takes about half
+again as long as the estimate, and `spread_reason` names the population and the
+run count behind it. Confidence 1.0 with a large spread is a coherent answer —
+the code was read correctly, and the GPU is simply not what governs its time:
+the card waits on the host, so the run inherits whichever host it lands on. The
+lever is GPU utilization — whatever leaves the card idle in this code (data
+loaded in the main process, per-item preprocessing, synchronous transfers, a
+batch too small to fill the card). `calibration_basis` says whether this shape was measured (`calibrated`),
+answered by a neighbouring one (`extrapolated`), or matched nothing at all
+(`uncalibrated`, where the seconds are an order of magnitude rather than a
+figure).
 
 ---
 

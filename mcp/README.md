@@ -35,6 +35,9 @@ to):
   "confidence": 1.0,        // 0-1
   "analysis_method": "ast", // "ast" | "llm"
   "cpu_only": false,
+  "spread": 1.51,           // slow end of the measured host population
+  "spread_reason": "1.51x { cv_training, nw=one } on the compute phase, observed on 42 runs across 16 hosts (worst 2.45x)",
+  "calibration_basis": "calibrated",  // | "extrapolated" | "uncalibrated"
   "knobs": [                // the run parameters worth re-estimating
     { "name": "num_workers", "value": null, "same_work": true },
     { "name": "batch_size",  "value": "16", "same_work": true },
@@ -65,6 +68,20 @@ is for.
 - `same_work: false` — epochs, steps, sequence length. These shrink the job
   itself, so a lower number is a different task rather than a cheaper one. They
   appear only when the code actually sets them.
+
+`spread` and `calibration_basis` answer a different question than `confidence`.
+Confidence is about the reading of the code; spread is about the world the code
+will run in — the same source on the same card lands over a range of hosts, and
+1.51 means the slow end of that measured population takes about half again as
+long as the estimate. Both can be high at once, which is the honest description
+of a job whose time the GPU does not govern: the card waits on the host, so the
+run inherits whichever host it lands on. The lever there is GPU utilization —
+whatever leaves the card idle in this code (data loaded in the main process,
+per-item preprocessing, synchronous transfers, a batch too small to fill the
+card). `spread_reason` names the population the number came from and how many
+runs it rests on; `calibration_basis` says whether this shape was measured at all
+(`calibrated`), answered by a neighbour (`extrapolated`), or matched nothing
+(`uncalibrated` — read the seconds as an order of magnitude).
 
 What it does **not** return: the cost model's calibration coefficients or
 weights. Only what the analyzer detected in the code leaves the server.

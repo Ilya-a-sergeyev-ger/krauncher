@@ -91,6 +91,7 @@ def _error(msg: str) -> dict:
         "compute_sec": None, "setup_sec": None, "io_sec": None,
         "min_vram_gb": None, "min_disk_gb": None,
         "confidence": 0.0, "analysis_method": None, "cpu_only": None,
+        "spread": None, "spread_reason": None, "calibration_basis": None,
         "knobs": [], "findings": [],
         "error": msg[:300],
     }
@@ -203,6 +204,22 @@ async def estimate(code: str) -> dict:
     job itself — dropping it buys a smaller result, not a cheaper one. Report
     that as a change of task, never as a saving.
 
+    `spread` says how far the same code scatters across real hosts: 1.5 means
+    the slow end of the measured population runs about 1.5x the estimate. It is
+    a measured population factor, not a doubt about the reading — confidence can
+    be 1.0 and the spread still large, and `spread_reason` names the population
+    it was measured on. A large spread means the GPU is not what governs this
+    job's time: the card waits on the host, so the run inherits whatever host it
+    lands on. The lever is GPU utilization — find what leaves the card idle in
+    this code (data loaded in the main process, per-item preprocessing,
+    synchronous transfers, a batch too small to fill the card), change it,
+    re-estimate, and watch both numbers.
+
+    `calibration_basis` says where the numbers came from: "calibrated" (this
+    shape was measured), "extrapolated" (a neighbouring shape answered), or
+    "uncalibrated" (nothing matched — treat the seconds as an order of
+    magnitude, not a figure).
+
     The seconds are a RELATIVE signal for comparing code against code, not an
     absolute forecast. They are normalized to a fixed reference card (RTX PRO
     6000 WS) so two estimates are comparable; the real GPU and host the code
@@ -215,6 +232,9 @@ async def estimate(code: str) -> dict:
       - min_vram_gb / min_disk_gb: what the task needs to run at all
       - confidence (0-1) and analysis_method ("ast" | "llm"): how much to trust it
       - cpu_only: true when the task makes no use of the GPU
+      - spread / spread_reason / calibration_basis: how far the estimate
+        scatters on real hosts, why, and whether this shape was measured
+        (see above; null on an analyzer that does not report them)
       - knobs: the run parameters found in this code, each with its current
         value and `same_work` (see above) — the ones worth re-estimating
       - findings: everything the analyzer detected in the code (model, dataset,
@@ -268,6 +288,11 @@ async def estimate(code: str) -> dict:
         "confidence": d.get("confidence"),
         "analysis_method": d.get("analysis_method"),
         "cpu_only": bool(d.get("cpu_only", False)),
+        # Analyzer-side honesty fields, carried through the client's untyped
+        # duration_estimate pass-through. Absent on older analyzers → null.
+        "spread": extra.get("spread"),
+        "spread_reason": extra.get("spread_reason"),
+        "calibration_basis": extra.get("calibration_basis"),
         "knobs": _knobs(findings),
         "findings": findings,
     }
