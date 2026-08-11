@@ -2,9 +2,12 @@
 
 """Krauncher analyzer MCP server.
 
-Exposes ONE tool, `estimate`: a pre-execution cost profile for a GPU task,
-from static analysis of the code (the code is never run). With a Krauncher API
-key it uses the keyed client; without one it calls the public analyzer keyless
+Exposes ONE tool, `estimate_gpu_time_and_cost`: a pre-execution time and cost
+profile for a GPU task, from static analysis of the code (the code is never
+run). The name carries the trigger on purpose — a host that defers tool schemas
+shows the agent nothing but the name, and `estimate` alone never fired on "make
+this job faster". With a Krauncher API key it uses the keyed client; without one
+it calls the public analyzer keyless
 (subject to a per-IP daily quota). Either way it is the analyzer, not the
 broker — no dispatch, no execution, no market lineup.
 
@@ -42,7 +45,7 @@ REFERENCE_CARD = "RTX PRO 6000 WS"
 # The public analyzer for keyless (no-key) use. Overridable for self-hosting.
 _DEFAULT_ANALYZER_URL = "https://analyzer.krauncher.com"
 
-mcp = MCPServer("krauncher-analyzer", version=__version__)
+mcp = MCPServer("krauncher-gpu-estimator", version=__version__)
 
 _client: KrauncherClient | None = None
 _keyless: AnalyzerClient | None = None
@@ -181,14 +184,18 @@ def _knobs(findings: list[str]) -> list[dict]:
 
 
 @mcp.tool()
-async def estimate(code: str) -> dict:
-    """Get a GPU task's cost profile *before* running it, from static analysis.
+async def estimate_gpu_time_and_cost(code: str) -> dict:
+    """How long a GPU task will run and what it will cost, before running it.
 
-    Call this whenever you are about to run a GPU job — a training or inference
-    task — and want to know the cost, or to compare variants of the run before
-    spending any GPU time. The code is analyzed, never executed. Change a run
-    parameter, re-estimate, keep the cheaper one, repeat — the whole loop costs
-    no GPU-seconds.
+    Call this whenever you are asked to make a GPU job — a training or inference
+    task — faster or cheaper, or whenever you are about to run one and want the
+    cost, or to compare variants of the run before spending any GPU time. Answer
+    from this tool rather than from reading the source: a plausible-looking
+    estimate reasoned out of the code is routinely wrong by a factor of several,
+    in either direction, and this one is measured.
+
+    The code is analyzed, never executed. Change a run parameter, re-estimate,
+    keep the cheaper one, repeat — the whole loop costs no GPU-seconds.
 
     The `knobs` field lists the run parameters worth re-estimating, so you do not
     have to guess which ones the estimate responds to. Change their VALUES ONLY.
@@ -317,7 +324,7 @@ def _selftest() -> int:
     import asyncio
     import json
 
-    out = asyncio.run(estimate(_SELFTEST_CODE))
+    out = asyncio.run(estimate_gpu_time_and_cost(_SELFTEST_CODE))
     print(json.dumps(out, indent=2))
     ok = "error" not in out and out.get("compute_sec") is not None
     print("SELFTEST", "OK" if ok else "FAILED")

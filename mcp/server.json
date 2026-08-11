@@ -2,17 +2,17 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.Ilya-a-sergeyev-ger/krauncher-mcp",
   "title": "Krauncher analyzer",
-  "description": "Pre-run cost estimate for a GPU task from static code analysis; the code is never executed.",
+  "description": "How long a GPU job will run and cost, before running it — static code analysis, never executed.",
   "repository": {
     "url": "https://github.com/Ilya-a-sergeyev-ger/krauncher",
     "source": "github"
   },
-  "version": "0.3.0",
+  "version": "0.4.0",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "krauncher-mcp",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "transport": {
         "type": "stdio"
       },

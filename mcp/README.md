@@ -16,7 +16,7 @@ will differ, so never read a second-count as the wall-clock you will get.
 Compare variant-to-variant. This is an early **0.x** release — the model is
 approximate and evolving.
 
-## The `estimate` tool
+## The `estimate_gpu_time_and_cost` tool
 
 Input: `code` — the task's Python source (a self-contained function; a
 `@client.task`-decorated function is fine).
@@ -93,7 +93,7 @@ pip install -e .        # from this directory; also installs the analyzer client
 ```
 
 An API key is **optional**. Without one the server calls the public analyzer
-**keyless**, under a per-IP daily quota (when the quota is reached, `estimate`
+**keyless**, under a per-IP daily quota (when the quota is reached, the tool
 returns a short note to register for a larger one). Set a key to use your own
 account and skip the quota:
 
@@ -101,7 +101,7 @@ account and skip the quota:
 export KRAUNCHER_API_KEY=cas_...   # optional
 ```
 
-Verify it works without wiring up a client — runs `estimate` on a sample task
+Verify it works without wiring up a client — runs the tool on a sample task
 and prints the contract:
 
 ```sh
@@ -116,7 +116,7 @@ keyless against the public analyzer:
 ```jsonc
 {
   "mcpServers": {
-    "krauncher-analyzer": {
+    "krauncher-gpu-estimator": {
       "command": "krauncher-mcp"
     }
   }
@@ -128,7 +128,7 @@ To use your own account (keyed, exempt from the per-IP quota), add the key:
 ```jsonc
 {
   "mcpServers": {
-    "krauncher-analyzer": {
+    "krauncher-gpu-estimator": {
       "command": "krauncher-mcp",
       "env": { "KRAUNCHER_API_KEY": "cas_..." }
     }

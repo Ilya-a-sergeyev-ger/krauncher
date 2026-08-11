@@ -396,7 +396,8 @@ Response (rows sorted cheapest-first by `estimated_cost_usd`):
 
 ## MCP server — the estimate as an agent tool
 
-`krauncher-mcp` exposes the pre-run estimate as a single MCP tool, `estimate`,
+`krauncher-mcp` exposes the pre-run estimate as a single MCP tool,
+`estimate_gpu_time_and_cost`,
 for agents that speak the Model Context Protocol (Claude Desktop, Claude Code,
 Cursor, ...). It wraps the analyzer, not the broker — the code is analyzed
 statically, never executed.
@@ -407,7 +408,7 @@ pip install krauncher-mcp
 
 ```jsonc
 // MCP client config — no key needed
-{ "mcpServers": { "krauncher-analyzer": { "command": "krauncher-mcp" } } }
+{ "mcpServers": { "krauncher-gpu-estimator": { "command": "krauncher-mcp" } } }
 ```
 
 Without a key it runs **keyless** against the public analyzer, under a per-IP
@@ -415,7 +416,7 @@ daily quota (a 429 comes back as a short note to register for a larger one). Set
 `KRAUNCHER_API_KEY` to use your account and skip the quota. Override the endpoint
 with `KRAUNCHER_ANALYZER_URL` when self-hosting the analyzer.
 
-`estimate(code)` returns the task's cost **profile on the reference card** (RTX
+`estimate_gpu_time_and_cost(code)` returns the task's cost **profile on the reference card** (RTX
 PRO 6000 WS, the card CU is normalized to), not the per-GPU priced lineup that
 `POST /api/estimate` returns:
 
