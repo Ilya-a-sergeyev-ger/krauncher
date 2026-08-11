@@ -408,7 +408,7 @@ pip install krauncher-mcp
 
 ```jsonc
 // MCP client config — no key needed
-{ "mcpServers": { "krauncher-gpu-estimator": { "command": "krauncher-mcp" } } }
+{ "mcpServers": { "gpu-estimator": { "command": "krauncher-mcp" } } }
 ```
 
 Without a key it runs **keyless** against the public analyzer, under a per-IP

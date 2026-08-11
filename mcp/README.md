@@ -116,7 +116,7 @@ keyless against the public analyzer:
 ```jsonc
 {
   "mcpServers": {
-    "krauncher-gpu-estimator": {
+    "gpu-estimator": {
       "command": "krauncher-mcp"
     }
   }
@@ -128,7 +128,7 @@ To use your own account (keyed, exempt from the per-IP quota), add the key:
 ```jsonc
 {
   "mcpServers": {
-    "krauncher-gpu-estimator": {
+    "gpu-estimator": {
       "command": "krauncher-mcp",
       "env": { "KRAUNCHER_API_KEY": "cas_..." }
     }
@@ -137,6 +137,12 @@ To use your own account (keyed, exempt from the per-IP quota), add the key:
 ```
 
 Self-hosting the analyzer? Override the endpoint with `KRAUNCHER_ANALYZER_URL`.
+
+Nothing else to configure for discovery: the tool ships marked
+`anthropic/alwaysLoad`, so on hosts that defer MCP schemas behind a tool search
+(Claude Code does this by default) it is in context from the first turn rather
+than waiting to be searched for. One tool, one small schema — that is the whole
+budget it spends.
 
 ## Scope
 

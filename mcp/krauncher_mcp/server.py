@@ -4,10 +4,11 @@
 
 Exposes ONE tool, `estimate_gpu_time_and_cost`: a pre-execution time and cost
 profile for a GPU task, from static analysis of the code (the code is never
-run). The name carries the trigger on purpose — a host that defers tool schemas
-shows the agent nothing but the name, and `estimate` alone never fired on "make
-this job faster". With a Krauncher API key it uses the keyed client; without one
-it calls the public analyzer keyless
+run). The tool marks itself `anthropic/alwaysLoad`, so its schema is present
+from the first turn instead of waiting behind a tool search: an agent asked to
+make a GPU job faster answered from the source twice, both times reporting the
+tool as deferred and never loaded. With a Krauncher API key it uses the keyed
+client; without one it calls the public analyzer keyless
 (subject to a per-IP daily quota). Either way it is the analyzer, not the
 broker — no dispatch, no execution, no market lineup.
 
@@ -45,7 +46,30 @@ REFERENCE_CARD = "RTX PRO 6000 WS"
 # The public analyzer for keyless (no-key) use. Overridable for self-hosting.
 _DEFAULT_ANALYZER_URL = "https://analyzer.krauncher.com"
 
-mcp = MCPServer("krauncher-gpu-estimator", version=__version__)
+# Server instructions load at session start even when tool schemas are deferred
+# (Claude Code's tool search is on by default: only tool names and this text
+# reach the model on the first turn). So the "when to reach for this" argument
+# has to live HERE, not only in the tool description — a host that defers
+# schemas never shows the description until something already made it search.
+# Truncated at 2KB by the client; keep the decisive sentences at the top.
+_INSTRUCTIONS = """\
+GPU job cost and runtime from static analysis of the code.
+
+One tool, `estimate_gpu_time_and_cost`: give it a training or inference job's
+Python source and it returns the time on a fixed reference card, the VRAM and
+disk the job needs, the run parameters that move the time with the values found
+in the code, and how far the same code scatters across real hosts. The numbers
+come from a corpus of measured runs, not from reading the source.
+
+The code is analyzed, never executed, so a call spends no GPU time and can be
+repeated on variants of the same job.
+
+What it answers: how long a GPU job will take, what is holding its performance
+back, whether the GPU is actually utilized or left waiting on the host, and
+which run parameters to change to make the code faster or cheaper.
+"""
+
+mcp = MCPServer("gpu-estimator", version=__version__, instructions=_INSTRUCTIONS)
 
 _client: KrauncherClient | None = None
 _keyless: AnalyzerClient | None = None
@@ -183,77 +207,44 @@ def _knobs(findings: list[str]) -> list[dict]:
     return out
 
 
-@mcp.tool()
+@mcp.tool(meta={"anthropic/alwaysLoad": True})
 async def estimate_gpu_time_and_cost(code: str) -> dict:
-    """How long a GPU task will run and what it will cost, before running it.
+    """Runtime, cost and performance analysis of a GPU job, before running it.
 
-    Call this whenever you are asked to make a GPU job — a training or inference
-    task — faster or cheaper, or whenever you are about to run one and want the
-    cost, or to compare variants of the run before spending any GPU time. Answer
-    from this tool rather than from reading the source: a plausible-looking
-    estimate reasoned out of the code is routinely wrong by a factor of several,
-    in either direction, and this one is measured.
+    Use it to predict how long a training or inference job will take, find what
+    holds its performance back, see whether the GPU is utilized or left waiting
+    on the host, and pick the run parameters that make the code faster or
+    cheaper. Numbers come from a corpus of measured runs — a
+    runtime reasoned out of source is routinely wrong by several times. The code
+    is analyzed, never executed: change a parameter, re-estimate, keep the
+    cheaper variant — zero GPU-seconds.
 
-    The code is analyzed, never executed. Change a run parameter, re-estimate,
-    keep the cheaper one, repeat — the whole loop costs no GPU-seconds.
+    Returns, on a fixed reference card (RTX PRO 6000 WS): compute_sec /
+    setup_sec / io_sec, min_vram_gb / min_disk_gb, cpu_only, confidence (0-1),
+    analysis_method ("ast" | "llm"), findings (what the analyzer read from the
+    code), plus knobs / spread / spread_reason / calibration_basis:
 
-    The `knobs` field lists the run parameters worth re-estimating, so you do not
-    have to guess which ones the estimate responds to. Change their VALUES ONLY.
-    Do not restructure the job to make the number go down: not the model, not the
-    architecture, not the dataset, not the training procedure.
+    `knobs` is the shortlist worth re-estimating — change their VALUES ONLY, not
+    the model, architecture, dataset or procedure. `value: null` means it is not
+    a literal in this source (it arrives as an argument, a config entry or an
+    env var), so name it in the code and estimate again. `same_work: false`
+    (epochs, steps, sequence length) shrinks the job itself: report that as a
+    change of task, never as a saving.
 
-    A knob with `value: null` was not visible to the analyzer — the value reaches
-    the job as a call argument, a config entry or an environment variable rather
-    than a literal in this source. Nothing can price it until the code states it,
-    so name it in the source and estimate again.
+    `spread` is how far the same code scatters across real hosts: 1.5 means the
+    slow end of the measured population runs about 1.5x the estimate. It is a
+    measured factor, not doubt about the reading — confidence 1.0 with a large
+    spread says the GPU is not what governs this job's time, the card waits on
+    the host. The lever is GPU utilization: find what leaves the card idle (data
+    loaded in the main process, per-item preprocessing, synchronous transfers, a
+    batch too small to fill it). `spread_reason` names it.
 
-    A knob with `same_work: false` (epochs, steps, sequence length) shrinks the
-    job itself — dropping it buys a smaller result, not a cheaper one. Report
-    that as a change of task, never as a saving.
+    `calibration_basis` is "calibrated", "extrapolated" (a neighbour answered)
+    or "uncalibrated" (read the seconds as an order of magnitude).
 
-    `spread` says how far the same code scatters across real hosts: 1.5 means
-    the slow end of the measured population runs about 1.5x the estimate. It is
-    a measured population factor, not a doubt about the reading — confidence can
-    be 1.0 and the spread still large, and `spread_reason` names the population
-    it was measured on. A large spread means the GPU is not what governs this
-    job's time: the card waits on the host, so the run inherits whatever host it
-    lands on. The lever is GPU utilization — find what leaves the card idle in
-    this code (data loaded in the main process, per-item preprocessing,
-    synchronous transfers, a batch too small to fill the card), change it,
-    re-estimate, and watch both numbers.
-
-    `calibration_basis` says where the numbers came from: "calibrated" (this
-    shape was measured), "extrapolated" (a neighbouring shape answered), or
-    "uncalibrated" (nothing matched — treat the seconds as an order of
-    magnitude, not a figure).
-
-    The seconds are a RELATIVE signal for comparing code against code, not an
-    absolute forecast. They are normalized to a fixed reference card (RTX PRO
-    6000 WS) so two estimates are comparable; the real GPU and host the code
-    ends up running on will differ, so never read a second-count as the
-    wall-clock you will actually get. Compare variant-to-variant, not to the
-    clock. (Early 0.x release — the model is approximate and evolving.)
-
-    Returns, on the reference card (RTX PRO 6000 WS):
-      - compute_sec / setup_sec / io_sec: the three phases of wall time
-      - min_vram_gb / min_disk_gb: what the task needs to run at all
-      - confidence (0-1) and analysis_method ("ast" | "llm"): how much to trust it
-      - cpu_only: true when the task makes no use of the GPU
-      - spread / spread_reason / calibration_basis: how far the estimate
-        scatters on real hosts, why, and whether this shape was measured
-        (see above; null on an analyzer that does not report them)
-      - knobs: the run parameters found in this code, each with its current
-        value and `same_work` (see above) — the ones worth re-estimating
-      - findings: everything the analyzer detected in the code (model, dataset,
-        optimizer, batch, precision, sample count, ...)
-
-    Even a rough, low-confidence, or partial estimate is useful — it never
-    blocks. On any failure it returns the same shape with an `error` string and
-    confidence 0, never an exception.
-
-    Args:
-        code: the task's Python source — a self-contained function (a
-            `@client.task`-decorated function is fine).
+    The seconds compare code against code on a fixed card, never the wall-clock
+    you will get. On failure the same shape returns with an `error` and
+    confidence 0.
     """
     try:
         cls = await _classify(code)
