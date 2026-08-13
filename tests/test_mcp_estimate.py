@@ -46,9 +46,11 @@ class _Recorder:
     def __init__(self, tag):
         self.tag = tag
         self.seen = []
+        self.seen_kwargs = []
 
     async def classify(self, code, dataset_mb=None, kwargs=None):
         self.seen.append(code)
+        self.seen_kwargs.append(kwargs)
         return TaskClassification(
             min_vram_gb=8, tier="light", confidence=1.0, analysis_method="ast",
             compute_units=7500.0, cu_io=1000.0, cu_setup=3000.0,
@@ -153,7 +155,7 @@ async def test_quota_error_surfaces_the_registration_cta(monkeypatch):
     class _QuotaError(Exception):
         response = _Resp()
 
-    async def _raise(_code):
+    async def _raise(_code, _run_args=None):
         raise _QuotaError()
 
     monkeypatch.setattr(server, "_classify", _raise)
@@ -164,7 +166,7 @@ async def test_quota_error_surfaces_the_registration_cta(monkeypatch):
 
 
 async def test_unparseable_code_is_reported_before_any_request(monkeypatch):
-    async def _fail(_code):
+    async def _fail(_code, _run_args=None):
         raise AssertionError("must not reach the analyzer")
 
     monkeypatch.setattr(server, "_classify", _fail)
@@ -175,7 +177,7 @@ async def test_unparseable_code_is_reported_before_any_request(monkeypatch):
 
 
 async def test_analyzer_failure_returns_the_contract_shape(monkeypatch):
-    async def _raise(_code):
+    async def _raise(_code, _run_args=None):
         raise RuntimeError("analyzer down")
 
     monkeypatch.setattr(server, "_classify", _raise)
@@ -208,6 +210,28 @@ async def test_iteration_basis_reaches_the_agent(monkeypatch):
 
     assert out["iterations"] == 4690
     assert out["iteration_basis"] == "literal_loop"
+
+
+async def test_run_args_reach_the_analyzer(monkeypatch):
+    """The values the job will be called with are what makes a parameterised
+    schedule resolvable."""
+    recorder = _Recorder("keyed")
+    monkeypatch.setattr(server, "_get_client", lambda: _FakeKeyedClient(recorder))
+
+    await server.estimate_gpu_time_and_cost(CODE, {"steps": 200, "batch_size": 32})
+
+    assert recorder.seen_kwargs == [{"steps": 200, "batch_size": 32}]
+
+
+async def test_no_run_args_sends_none_not_an_empty_dict(monkeypatch):
+    """An empty mapping would read as 'the call takes no arguments'."""
+    recorder = _Recorder("keyed")
+    monkeypatch.setattr(server, "_get_client", lambda: _FakeKeyedClient(recorder))
+
+    await server.estimate_gpu_time_and_cost(CODE)
+    await server.estimate_gpu_time_and_cost(CODE, {})
+
+    assert recorder.seen_kwargs == [None, None]
 
 
 async def test_iteration_fields_are_null_on_an_older_analyzer(monkeypatch):

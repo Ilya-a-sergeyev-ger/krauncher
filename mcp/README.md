@@ -18,8 +18,19 @@ approximate and evolving.
 
 ## The `estimate_gpu_time_and_cost` tool
 
-Input: `code` — the task's Python source (a self-contained function; a
-`@client.task`-decorated function is fine).
+Input: `code` — the job's Python source. Send the **whole module**, not just
+the function that trains: the model, the dataset size and the step count are
+read off whatever you pass, so a helper that builds the model or loads the data
+takes its share of the answer with it when it is left behind. Extra code costs
+nothing — anything that is not the GPU job is simply not detected. (A
+`@client.task`-decorated function is fine, and so is a plain script.)
+
+Optional: `run_args` — the arguments the job will be called with, when the
+source leaves them open (`{"epochs": 3, "batch_size": 32}` for a
+`def train(epochs, batch_size)`). Names must match parameters some function in
+the source declares; scalars only. Pass what the run actually is, never a
+guess — the estimate scales with these. `findings` reports which arguments were
+applied, or that none matched.
 
 Output, on the reference card (**RTX PRO 6000 WS**, the card CU is normalized
 to):

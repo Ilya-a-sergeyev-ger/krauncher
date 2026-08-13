@@ -74,7 +74,10 @@ in the code, and how far the same code scatters across real hosts. The numbers
 come from a corpus of measured runs, not from reading the source.
 
 The code is analyzed, never executed, so a call spends no GPU time and can be
-repeated on variants of the same job.
+repeated on variants of the same job. Send the whole module, not one function:
+what the model is, how big the dataset is and how many steps run are read off
+whatever source you pass, and a helper left behind takes its share of the
+answer with it.
 
 What it answers: how long a GPU job will take, what is holding its performance
 back, whether the GPU is actually utilized or left waiting on the host, and
@@ -131,9 +134,9 @@ def _analyzer() -> AnalyzerClient:
     return _get_keyless()
 
 
-async def _classify(code: str):
+async def _classify(code: str, run_args: dict | None = None):
     """One request shape on both branches. Returns a TaskClassification."""
-    return await _analyzer().classify(code)
+    return await _analyzer().classify(code, kwargs=run_args or None)
 
 
 def _error(msg: str) -> dict:
@@ -233,7 +236,9 @@ def _knobs(findings: list[str]) -> list[dict]:
 
 
 @mcp.tool(meta={"anthropic/alwaysLoad": True})
-async def estimate_gpu_time_and_cost(code: str) -> dict:
+async def estimate_gpu_time_and_cost(
+    code: str, run_args: dict | None = None,
+) -> dict:
     """Runtime, cost and performance analysis of a GPU job, before running it.
 
     Use it to predict how long a training or inference job will take, find what
@@ -276,13 +281,31 @@ async def estimate_gpu_time_and_cost(code: str) -> dict:
     in), "dataset_size_estimate" (steps derived from the dataset's byte size),
     "unknown" (a single step assumed). On an invented basis the seconds move
     with that assumption and can be wrong by orders of magnitude — state the
-    real number in the source (`max_steps=`, a literal loop bound, the sample
-    count) and estimate again, and say in your answer that the figure rested
+    real number, in `run_args` when the source takes it as a parameter or in
+    the source itself (`max_steps=`, a literal loop bound, the sample count),
+    estimate again, and say in your answer that the figure rested
     on an assumption.
 
     The seconds compare code against code on a fixed card, never the wall-clock
     you will get. On failure the same shape returns with an `error` and
     confidence 0.
+
+    Args:
+        code: the job's Python source. Send the whole module rather than the
+            single function that trains: the model, the dataset size and the
+            step count are read off whatever you pass, so a helper that builds
+            the model or loads the data takes its share of the answer with it
+            when it is left behind. Extra code costs nothing — anything that is
+            not the GPU job is simply not detected.
+        run_args: the arguments the job will be called with, when the source
+            leaves them open — `{"epochs": 3, "batch_size": 32}` for a
+            `def train(epochs, batch_size)`. Names must match the parameters
+            some function in the source declares; scalars only. Pass what you
+            know the run to be, never a guess: the estimate scales with these,
+            and a plausible invention is worse than an `iteration_basis` that
+            admits the count was assumed. Leave it out when the source already
+            states the schedule — `findings` reports which arguments were
+            applied, or that none matched.
     """
     # The source is sent as written, so nothing compiles it before the
     # analyzer does. Say so here rather than returning the analyzer's
@@ -293,7 +316,7 @@ async def estimate_gpu_time_and_cost(code: str) -> dict:
         return _error(f"code does not parse: {exc}")
 
     try:
-        cls = await _classify(code)
+        cls = await _classify(code, run_args)
     except Exception as exc:  # best effort — hand the agent a usable shape
         resp = getattr(exc, "response", None)
         if getattr(resp, "status_code", None) == 429:

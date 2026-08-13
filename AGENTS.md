@@ -431,7 +431,13 @@ and the wrong one for a whole function.
 
 `estimate_gpu_time_and_cost(code)` returns the task's cost **profile on the reference card** (RTX
 PRO 6000 WS, the card CU is normalized to), not the per-GPU priced lineup that
-`POST /api/estimate` returns:
+`POST /api/estimate` returns. Pass the **whole module**: the model, the dataset
+size and the step count are read off whatever source you send, so a helper left
+behind takes its share of the answer with it — `serialize_function` bundles
+those helpers for a real submission, and the MCP path analyzes exactly what you
+hand it. A second, optional argument `run_args` carries the values the job will
+be called with (`{"epochs": 3}` for a `def train(epochs)`) — the same channel a
+real submission fills from the call site; `findings` says which were applied.
 
 ```jsonc
 {
