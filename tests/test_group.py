@@ -44,7 +44,7 @@ def test_task_wrapper_stores_options():
     assert opts["disk_gb"] == 15
     assert opts["timeout"] == 120
     assert t._krauncher_defaults == {}
-    assert t._krauncher_cls_cache == [None]
+    assert t._krauncher_cls_cache == {}
 
 
 def test_group_vram_floor_from_explicit_pins():

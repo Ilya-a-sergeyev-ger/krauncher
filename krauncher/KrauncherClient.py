@@ -111,6 +111,20 @@ _UNSET: Any = object()
 _CONFIG_CACHE_TTL: float = 900.0  # 15 minutes
 
 
+def _kwargs_cache_key(merged_kwargs: dict[str, Any]) -> tuple:
+    """Cache key for one classification: the call arguments the analyzer sees.
+
+    Only scalars are keyed, because only scalars are sent — both the client
+    (``AnalyzerClient.classify``) and the analyzer (``_substitute_kwargs``)
+    drop everything else, so a changed list or dict cannot change the answer
+    and must not cost a re-analysis.
+    """
+    return tuple(sorted(
+        (k, v) for k, v in merged_kwargs.items()
+        if isinstance(v, (int, float, bool, str))
+    ))
+
+
 class KrauncherClient:
     """Client for submitting tasks to the CaS broker.
 
@@ -450,10 +464,14 @@ class KrauncherClient:
             except (ValueError, TypeError):
                 pass
 
-            # Cache analyzer result per decorated function — the code_string
-            # never changes, so re-analyzing on every call is wasteful and
-            # causes timeouts under concurrent load.
-            _cached_classification: list[TaskClassification | None] = [None]
+            # Cache analyzer results per decorated function. The code_string
+            # never changes, so re-analyzing an identical call is wasteful and
+            # causes timeouts under concurrent load — but the call arguments
+            # DO change, and they are part of what was analyzed (epochs, batch
+            # size and the like reach the analyzer as kwargs and set the
+            # iteration count). Keyed by those arguments, so a repeat call is
+            # free and a different call is re-analyzed.
+            _cached_classification: dict[tuple, TaskClassification] = {}
 
             @functools.wraps(func)
             async def wrapper(**kwargs: Any) -> TaskHandle:
@@ -565,7 +583,7 @@ class KrauncherClient:
         kwargs: dict[str, Any],
         *,
         func_defaults: dict[str, Any] | None = None,
-        classification_cache: list | None = None,
+        classification_cache: dict | None = None,
         classification: TaskClassification | None = None,
         group: TaskGroup | None = None,
         vram_gb: int | None = None,
@@ -652,13 +670,13 @@ class KrauncherClient:
         vram_gb: int | None = None,
         data: str | None = None,
         dataset_size: float | None = None,
-        classification_cache: list | None = None,
+        classification_cache: dict | None = None,
     ) -> TaskClassification:
         """Analysis phase: classify the code via cas-analyzer.
 
         Resolves the dataset size, applies the explicit/env vram_gb override,
-        caches per decorated function, and logs the result at DEBUG level.
-        No broker submission happens here.
+        caches per decorated function *and call arguments*, and logs the result
+        at DEBUG level. No broker submission happens here.
         """
         client = self
         # Env override for the declared VRAM class (see task() docstring).
@@ -666,9 +684,11 @@ class KrauncherClient:
         if _vram_env:
             vram_gb = int(_vram_env)
 
-        # Classification: call analyzer once, cache for subsequent calls.
-        if classification_cache is not None and classification_cache[0] is not None:
-            classification = classification_cache[0]
+        # Classification: call the analyzer once per distinct call, and reuse
+        # that answer for every repeat of the same call.
+        cache_key = _kwargs_cache_key(merged_kwargs)
+        if classification_cache is not None and cache_key in classification_cache:
+            classification = classification_cache[cache_key]
         else:
             # _analyzer raises KrauncherError if no analyzer configured
             try:
@@ -684,7 +704,7 @@ class KrauncherClient:
                     f"Analyzer failed and CU estimation is unavailable: {exc}"
                 ) from exc
             if classification_cache is not None:
-                classification_cache[0] = classification
+                classification_cache[cache_key] = classification
 
         if vram_gb is not None:
             # Level 1 override: keep analyzer's compute_units/duration/perf_table,
