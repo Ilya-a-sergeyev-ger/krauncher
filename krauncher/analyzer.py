@@ -225,16 +225,23 @@ class AnalyzerClient:
         token: str | None = None,
         user_id: str | None = None,
         llm_backend: str | None = None,
+        source: str = "api",
+        surface: str | None = None,
     ) -> None:
         self._url = analyzer_url.rstrip("/")
         self._timeout = timeout
         self._poll_interval = poll_interval
         self._user_id = user_id
         self._llm_backend = llm_backend
+        # Request origin, carried in the body. The analyzer reads it for
+        # attribution and forces its own value on anonymous requests.
+        self._source = source
         self._analyzer_pubkey: bytes | None = None
         self._headers: dict[str, str] = (
             {"X-Analyzer-Token": token} if token else {}
         )
+        if surface:
+            self._headers["X-Client-Surface"] = surface
 
     async def _fetch_pubkey(self, session: httpx.AsyncClient) -> bytes:
         """GET /pubkey — fetch and cache the analyzer's public key."""
@@ -276,7 +283,7 @@ class AnalyzerClient:
         async with httpx.AsyncClient(timeout=self._timeout, headers=self._headers) as session:
             # Build request body
             body: dict = {
-                "source": "api",
+                "source": self._source,
                 "user_id": self._user_id,
                 "llm_backend": self._llm_backend,
             }

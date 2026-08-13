@@ -7,10 +7,12 @@ profile for a GPU task, from static analysis of the code (the code is never
 run). The tool marks itself `anthropic/alwaysLoad`, so its schema is present
 from the first turn instead of waiting behind a tool search: an agent asked to
 make a GPU job faster answered from the source twice, both times reporting the
-tool as deferred and never loaded. With a Krauncher API key it uses the keyed
-client; without one it calls the public analyzer keyless
-(subject to a per-IP daily quota). Either way it is the analyzer, not the
-broker — no dispatch, no execution, no market lineup.
+tool as deferred and never loaded. With a Krauncher API key it asks the
+analyzer that key resolves; without one it asks the public analyzer keyless
+(subject to a per-IP daily quota). The key decides only WHICH analyzer answers:
+the request is built the same way either way, so the same code cannot get two
+different answers. Either way it is the analyzer, not the broker — no dispatch,
+no execution, no market lineup.
 
 The reference card is the RTX PRO 6000 WS, the card CU is normalized to, so
 `compute_units / 1000 == seconds on that card`; the three phase times fall
@@ -21,6 +23,7 @@ calibration coefficients and weights are never returned.
 """
 from __future__ import annotations
 
+import ast
 import dataclasses
 import logging
 import os
@@ -45,6 +48,15 @@ REFERENCE_CARD = "RTX PRO 6000 WS"
 
 # The public analyzer for keyless (no-key) use. Overridable for self-hosting.
 _DEFAULT_ANALYZER_URL = "https://analyzer.krauncher.com"
+
+# Request tag, on both branches — attribution on the analyzer side, and the
+# header it reads to route keyless traffic.
+_SURFACE = "mcp"
+
+# One budget for the whole analysis (submit + poll), on both branches. The
+# keyed client otherwise defaults to 10s, so the same code could time out with
+# a key and succeed without one.
+_ANALYZER_TIMEOUT = 30.0
 
 # Server instructions load at session start even when tool schemas are deferred
 # (Claude Code's tool search is on by default: only tool names and this text
@@ -85,7 +97,7 @@ def _get_client() -> KrauncherClient | None:
     if _client is None:
         try:
             # Reads KRAUNCHER_API_KEY / CAS_API_KEY (or a .env in CWD).
-            _client = KrauncherClient()
+            _client = KrauncherClient(analyzer_timeout=_ANALYZER_TIMEOUT)
         except Exception:
             return None
     return _client
@@ -95,21 +107,33 @@ def _get_keyless() -> AnalyzerClient:
     """Keyless client for the public analyzer — no key, quota'd per IP."""
     global _keyless
     if _keyless is None:
-        ac = AnalyzerClient(analyzer_url=_analyzer_url(), token=None, timeout=30.0)
-        # Tag the surface (telemetry + AST-only routing on the analyzer). The
-        # client exposes no setter, so set the request header directly.
-        ac._headers["X-Client-Surface"] = "mcp"
-        _keyless = ac
+        _keyless = AnalyzerClient(
+            analyzer_url=_analyzer_url(), token=None,
+            timeout=_ANALYZER_TIMEOUT, source=_SURFACE, surface=_SURFACE,
+        )
     return _keyless
 
 
-async def _classify(code: str):
-    """Keyed path when a key is configured, else the keyless public analyzer.
-    Both return a TaskClassification."""
+def _analyzer() -> AnalyzerClient:
+    """The analyzer to ask — keyed when a key resolves one, else keyless.
+
+    The key decides only WHERE the analyzer is, never WHAT is sent: both
+    branches end up calling `classify` on the same client type with the same
+    source. A key that no longer resolves an analyzer (revoked, or the broker
+    is down) falls back to keyless rather than failing the estimate.
+    """
     client = _get_client()
     if client is not None:
-        return await client.estimate_code(code)
-    return await _get_keyless().classify(code)
+        try:
+            return client.analyzer(source=_SURFACE, surface=_SURFACE)
+        except Exception:
+            pass
+    return _get_keyless()
+
+
+async def _classify(code: str):
+    """One request shape on both branches. Returns a TaskClassification."""
+    return await _analyzer().classify(code)
 
 
 def _error(msg: str) -> dict:
@@ -246,6 +270,14 @@ async def estimate_gpu_time_and_cost(code: str) -> dict:
     you will get. On failure the same shape returns with an `error` and
     confidence 0.
     """
+    # The source is sent as written, so nothing compiles it before the
+    # analyzer does. Say so here rather than returning the analyzer's
+    # job-failed text for what is a typo in the submitted code.
+    try:
+        ast.parse(code)
+    except SyntaxError as exc:
+        return _error(f"code does not parse: {exc}")
+
     try:
         cls = await _classify(code)
     except Exception as exc:  # best effort — hand the agent a usable shape

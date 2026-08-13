@@ -315,6 +315,26 @@ class KrauncherClient:
         )
         return self._analyzer_client
 
+    def analyzer(self, *, source: str = "api",
+                 surface: str | None = None) -> AnalyzerClient:
+        """The analyzer this account is configured for, ready to classify.
+
+        For callers that analyze code *as written* rather than as a submission:
+        :meth:`estimate_code` classifies the source ``run_code`` would submit
+        (the block wrapped in a generated function), which is the wrong shape
+        when the caller already holds a whole function. This hands back the
+        analyzer client itself, so such a caller sends exactly the source it
+        was given — the same request an analyzer-only client would make.
+
+        *source* and *surface* tag the request for attribution. Raises
+        :class:`KrauncherError` if no analyzer can be resolved from the broker.
+        """
+        client = self._analyzer          # raises if unresolvable
+        client._source = source
+        if surface:
+            client._headers["X-Client-Surface"] = surface
+        return client
+
     async def _resolve_dataset_mb(
         self,
         data: str | None,
