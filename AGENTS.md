@@ -247,6 +247,12 @@ data=, volume=, dataset_size=)` → `TaskClassification`: classify the exact
 source `run_code` would submit, **without** running it. Pass the result to
 `run_code(..., classification=...)` to execute without a second analysis.
 
+`client.analyzer(*, source=, surface=)` → `AnalyzerClient`: for classifying code
+**as written** rather than as a submission. `estimate_code` wraps the block in a
+generated function first — correct for a notebook cell, wrong for a whole
+function, which ends up one scope deeper than the analyzer expects. Await
+`classify(code)` on the returned client to send exactly the source you hold.
+
 ### HuggingFace-native pre-fetch
 
 Literal `load_dataset("org/name")` / `from_pretrained("org/name")` references in
@@ -415,6 +421,13 @@ Without a key it runs **keyless** against the public analyzer, under a per-IP
 daily quota (a 429 comes back as a short note to register for a larger one). Set
 `KRAUNCHER_API_KEY` to use your account and skip the quota. Override the endpoint
 with `KRAUNCHER_ANALYZER_URL` when self-hosting the analyzer.
+
+The key selects **which analyzer answers, not what is asked**: both routes send
+the source as given, so a key never changes the estimate for the same code. It
+is the analyzer client itself that is called (`KrauncherClient.analyzer()`), not
+`estimate_code` — the latter classifies the source `run_code` would *submit*,
+wrapped in a generated function, which is the right shape for a notebook cell
+and the wrong one for a whole function.
 
 `estimate_gpu_time_and_cost(code)` returns the task's cost **profile on the reference card** (RTX
 PRO 6000 WS, the card CU is normalized to), not the per-GPU priced lineup that

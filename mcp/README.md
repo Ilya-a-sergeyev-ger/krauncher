@@ -30,10 +30,10 @@ to):
   "compute_sec": 20.2,      // the three phases of wall time on the ref card
   "setup_sec": 3.0,
   "io_sec": 2.1,
-  "min_vram_gb": 6,         // raw requirement, no headroom margin
+  "min_vram_gb": 6,         // estimated requirement + a 5% safety margin
   "min_disk_gb": 10,
   "confidence": 1.0,        // 0-1
-  "analysis_method": "ast", // "ast" | "llm"
+  "analysis_method": "ast", // how the estimate was reached; "ast" is the plain case
   "cpu_only": false,
   "spread": 1.51,           // slow end of the measured host population
   "spread_reason": "1.51x { cv_training, nw=one } on the compute phase, observed on 42 runs across 16 hosts (worst 2.45x)",
@@ -55,6 +55,13 @@ The loop it is built for: **edit the run → estimate → keep what's cheaper �
 repeat**, all before spending a GPU-second. The estimate is a static forecast,
 not a guarantee; `confidence` and `analysis_method` say how much to trust it,
 and a rough estimate never blocks — it returns a best effort.
+
+`analysis_method` names the route the estimate took. `ast` is the plain case:
+the code was read and that was enough. Anything longer is the analyzer saying
+it wanted a second opinion and reports what happened instead —
+`ast_only_llm_disabled`, `ast_only_llm_unavailable`, `ast_degraded_queue_full`,
+`ast_only_llm_failed`, `ast+tree`. Those come with a lowered `confidence`;
+treat the value as prose, not as an enum to switch on.
 
 `knobs` is what turns that loop from guesswork into a shortlist. The parameters
 that move the time without changing what the code produces are listed every
@@ -100,6 +107,12 @@ account and skip the quota:
 ```sh
 export KRAUNCHER_API_KEY=cas_...   # optional
 ```
+
+The key decides **which analyzer answers, never what is asked**: the request is
+built the same way with or without it, so the same code cannot come back with
+two different estimates. A key that cannot resolve an analyzer — revoked, or the
+broker is unreachable — falls back to the keyless route rather than failing the
+estimate.
 
 Verify it works without wiring up a client — runs the tool on a sample task
 and prints the contract:
