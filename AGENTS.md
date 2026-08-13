@@ -442,6 +442,7 @@ PRO 6000 WS, the card CU is normalized to), not the per-GPU priced lineup that
   "cpu_only": false,
   "spread": 1.51, "spread_reason": "1.51x { cv_training, nw=one } on the compute phase, observed on 42 runs across 16 hosts (worst 2.45x)",
   "calibration_basis": "calibrated",                       // | extrapolated | uncalibrated
+  "iterations": 4690, "iteration_basis": "literal_loop",   // the step count, and whether it was read or assumed
   "knobs": [                                               // the run parameters to try
     { "name": "num_workers", "value": null, "same_work": true },
     { "name": "batch_size",  "value": "16", "same_work": true },
@@ -466,6 +467,15 @@ name it in the code and estimate again. `same_work: false` (epochs, steps,
 sequence length) marks a knob that shrinks the job itself — lowering it buys a
 smaller result, not a cheaper one, and belongs in the answer as a change of task
 rather than a saving.
+
+`iterations` is the step count the whole estimate scales with; `iteration_basis`
+says where it came from, which is what a wrong estimate is most often wrong
+about. Read from the code: `max_steps`, `literal_loop`, `epochs_x_samples`,
+`llm_decode`, `diffusion_steps`. Assumed: `epochs_x_default_samples` (a typical
+dataset size for that model stood in), `dataset_size_estimate` (steps from the
+dataset's byte size), `unknown` (one step assumed). On an assumed basis the
+seconds move with the assumption — state the real number in the source and
+estimate again, and say the figure rested on an assumption.
 
 `spread` is a measured population factor, not a doubt about the reading: 1.51
 means the slow end of the hosts this shape was measured on takes about half

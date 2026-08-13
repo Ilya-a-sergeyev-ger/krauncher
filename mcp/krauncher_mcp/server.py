@@ -143,6 +143,7 @@ def _error(msg: str) -> dict:
         "min_vram_gb": None, "min_disk_gb": None,
         "confidence": 0.0, "analysis_method": None, "cpu_only": None,
         "spread": None, "spread_reason": None, "calibration_basis": None,
+        "iterations": None, "iteration_basis": None,
         "knobs": [], "findings": [],
         "error": msg[:300],
     }
@@ -245,8 +246,9 @@ async def estimate_gpu_time_and_cost(code: str) -> dict:
 
     Returns, on a fixed reference card (RTX PRO 6000 WS): compute_sec /
     setup_sec / io_sec, min_vram_gb / min_disk_gb, cpu_only, confidence (0-1),
-    analysis_method ("ast" | "llm"), findings (what the analyzer read from the
-    code), plus knobs / spread / spread_reason / calibration_basis:
+    analysis_method, findings (what the analyzer read from the code), plus
+    knobs / spread / spread_reason / calibration_basis / iterations /
+    iteration_basis:
 
     `knobs` is the shortlist worth re-estimating — change their VALUES ONLY, not
     the model, architecture, dataset or procedure. `value: null` means it is not
@@ -265,6 +267,18 @@ async def estimate_gpu_time_and_cost(code: str) -> dict:
 
     `calibration_basis` is "calibrated", "extrapolated" (a neighbour answered)
     or "uncalibrated" (read the seconds as an order of magnitude).
+
+    `iterations` is the step count the whole estimate scales with, and
+    `iteration_basis` is where it came from. Read from the code:
+    "max_steps", "literal_loop", "epochs_x_samples", "llm_decode",
+    "diffusion_steps". Invented, because the code did not say:
+    "epochs_x_default_samples" (a typical dataset size for that model stood
+    in), "dataset_size_estimate" (steps derived from the dataset's byte size),
+    "unknown" (a single step assumed). On an invented basis the seconds move
+    with that assumption and can be wrong by orders of magnitude — state the
+    real number in the source (`max_steps=`, a literal loop bound, the sample
+    count) and estimate again, and say in your answer that the figure rested
+    on an assumption.
 
     The seconds compare code against code on a fixed card, never the wall-clock
     you will get. On failure the same shape returns with an `error` and
@@ -323,6 +337,8 @@ async def estimate_gpu_time_and_cost(code: str) -> dict:
         "spread": extra.get("spread"),
         "spread_reason": extra.get("spread_reason"),
         "calibration_basis": extra.get("calibration_basis"),
+        "iterations": extra.get("detected_iterations"),
+        "iteration_basis": extra.get("iteration_basis"),
         "knobs": _knobs(findings),
         "findings": findings,
     }

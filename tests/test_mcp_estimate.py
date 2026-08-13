@@ -52,6 +52,8 @@ class _Recorder:
         return TaskClassification(
             min_vram_gb=8, tier="light", confidence=1.0, analysis_method="ast",
             compute_units=7500.0, cu_io=1000.0, cu_setup=3000.0,
+            extra_debug={"detected_iterations": 4690,
+                         "iteration_basis": "literal_loop"},
         )
 
 
@@ -194,3 +196,32 @@ async def test_successful_estimate_reports_reference_card_seconds(monkeypatch):
     assert (out["compute_sec"], out["setup_sec"], out["io_sec"]) == (3.5, 3.0, 1.0)
     assert out["min_vram_gb"] == 8
     assert "error" not in out
+
+
+async def test_iteration_basis_reaches_the_agent(monkeypatch):
+    """The estimate scales with the step count, so where that count came from
+    travels with it."""
+    recorder = _Recorder("keyed")
+    monkeypatch.setattr(server, "_get_client", lambda: _FakeKeyedClient(recorder))
+
+    out = await server.estimate_gpu_time_and_cost(CODE)
+
+    assert out["iterations"] == 4690
+    assert out["iteration_basis"] == "literal_loop"
+
+
+async def test_iteration_fields_are_null_on_an_older_analyzer(monkeypatch):
+    """The analyzer may not report them; the contract keeps its shape."""
+
+    class _Old:
+        async def classify(self, code, dataset_mb=None, kwargs=None):
+            return TaskClassification(
+                min_vram_gb=8, tier="light", confidence=1.0,
+                analysis_method="ast", compute_units=7500.0,
+            )
+
+    monkeypatch.setattr(server, "_get_client", lambda: _FakeKeyedClient(_Old()))
+
+    out = await server.estimate_gpu_time_and_cost(CODE)
+
+    assert out["iterations"] is None and out["iteration_basis"] is None

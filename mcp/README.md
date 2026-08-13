@@ -38,6 +38,8 @@ to):
   "spread": 1.51,           // slow end of the measured host population
   "spread_reason": "1.51x { cv_training, nw=one } on the compute phase, observed on 42 runs across 16 hosts (worst 2.45x)",
   "calibration_basis": "calibrated",  // | "extrapolated" | "uncalibrated"
+  "iterations": 4690,       // the step count the estimate scales with
+  "iteration_basis": "literal_loop",  // read from the code, or assumed
   "knobs": [                // the run parameters worth re-estimating
     { "name": "num_workers", "value": null, "same_work": true },
     { "name": "batch_size",  "value": "16", "same_work": true },
@@ -89,6 +91,16 @@ card). `spread_reason` names the population the number came from and how many
 runs it rests on; `calibration_basis` says whether this shape was measured at all
 (`calibrated`), answered by a neighbour (`extrapolated`), or matched nothing
 (`uncalibrated` — read the seconds as an order of magnitude).
+
+`iterations` is the step count the whole estimate scales with, and
+`iteration_basis` says where that count came from — the one thing a wrong
+estimate is most often wrong about. Read from the code: `max_steps`,
+`literal_loop`, `epochs_x_samples`, `llm_decode`, `diffusion_steps`. Assumed,
+because the code did not say: `epochs_x_default_samples` (a typical dataset
+size for that model stood in), `dataset_size_estimate` (steps derived from the
+dataset's byte size), `unknown` (a single step assumed). On an assumed basis
+the seconds move with the assumption and can be wrong by orders of magnitude —
+state the real number in the source and estimate again.
 
 What it does **not** return: the cost model's calibration coefficients or
 weights. Only what the analyzer detected in the code leaves the server.
