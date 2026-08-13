@@ -74,7 +74,9 @@ in the code, and how far the same code scatters across real hosts. The numbers
 come from a corpus of measured runs, not from reading the source.
 
 The code is analyzed, never executed, so a call spends no GPU time and can be
-repeated on variants of the same job. Send the whole module, not one function:
+repeated on variants of the same job. Naming a value the analyzer could not see
+corrects which run is being priced; the change in seconds is not a saving.
+Send the whole module, not one function:
 what the model is, how big the dataset is and how many steps run are read off
 whatever source you pass, and a helper left behind takes its share of the
 answer with it.
@@ -258,7 +260,8 @@ async def estimate_gpu_time_and_cost(
     `knobs` is the shortlist worth re-estimating — change their VALUES ONLY, not
     the model, architecture, dataset or procedure. `value: null` means it is not
     a literal in this source (it arrives as an argument, a config entry or an
-    env var), so name it in the code and estimate again. `same_work: false`
+    env var), so name it in the code and estimate again — a correction, not a
+    saving (see below). `same_work: false`
     (epochs, steps, sequence length) shrinks the job itself: report that as a
     change of task, never as a saving.
 
@@ -283,8 +286,14 @@ async def estimate_gpu_time_and_cost(
     with that assumption and can be wrong by orders of magnitude — state the
     real number, in `run_args` when the source takes it as a parameter or in
     the source itself (`max_steps=`, a literal loop bound, the sample count),
-    estimate again, and say in your answer that the figure rested
-    on an assumption.
+    and estimate again.
+
+    Naming a value the analyzer could not see is a correction of what is being
+    priced, not a change to the job. The seconds will usually move a great deal,
+    and none of that movement is a saving: the first estimate simply described a
+    different run. Report it as a correction — "the earlier figure assumed
+    25 000 steps; this run is 500" — and never as a result of your changes. The
+    rule that governs `same_work: false` governs this too.
 
     The seconds compare code against code on a fixed card, never the wall-clock
     you will get. On failure the same shape returns with an `error` and
