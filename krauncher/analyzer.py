@@ -61,6 +61,7 @@ class TaskClassification:
     resource_profile: dict | None = None      # 8-dim host resource appetite (for EHP)
     epochs_bucket: str | None = None          # "one" | "few" | "many"
     samples_bucket: str | None = None         # "tiny" | "small" | "medium" | "large"
+    precision: str | None = None              # "fp32" | "fp16" | "bf16" | "fp8" | ... — dtype axis for broker bucket lookup
     cu_findings: list[str] = field(default_factory=list)  # training loop breakdown from analyzer
     analyzer_time: float | None = None              # analyzer round-trip time in seconds
     analyzer_job_id: str | None = None              # analyzer's job id (correlation key for results)
@@ -118,6 +119,8 @@ class TaskClassification:
             d["epochs_bucket"] = self.epochs_bucket
         if self.samples_bucket is not None:
             d["samples_bucket"] = self.samples_bucket
+        if self.precision is not None:
+            d["precision"] = self.precision
         if self.analyzer_job_id is not None:
             d["analyzer_job_id"] = self.analyzer_job_id
         # Universal pass-through of unmapped analyzer fields (debug/phase metadata).
@@ -411,6 +414,7 @@ class AnalyzerClient:
             resource_profile=hw.get("resource_profile"),
             epochs_bucket=epochs_bkt,
             samples_bucket=samples_bkt,
+            precision=hw.get("precision"),
             cu_findings=cu_findings,
             extra_debug=extra_debug,
         )
