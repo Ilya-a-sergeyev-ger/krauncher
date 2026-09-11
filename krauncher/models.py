@@ -231,15 +231,19 @@ def _fmt_money(amount: float, currency: str) -> str:
 
 
 def _log_billing_summary(result: TaskResult) -> None:
-    """Print a concise billing breakdown after a task completes.
+    """Print a concise usage breakdown after a task completes.
 
     Format::
 
-        Task <short_id> done in 12.3s — compute 25.0 KU (€0.02), \
-        fee 1.2 KU (€0.001), total 26.2 KU (€0.021)
+        Task <short_id> done in 12.3s — compute 25.0 units, dispatch 1.2 units, \
+        total 26.2 units of the test allowance (market cost €0.02)
 
-    Skipped when there is nothing to charge (no_capacity, dead_letter w/o
-    fee, legacy tasks without billing fields).
+    Krauncher is in a pre-commercial phase, so the summary reports usage against
+    the free test allowance and the provider's market cost of the run. It does
+    not state a fee or a sum owed: nothing is charged.
+
+    Skipped when there is nothing to report (no_capacity, dead_letter without a
+    dispatch deduction, legacy tasks without usage fields).
     """
     if result.total_charged_ku <= 0 and result.charged_ku <= 0 and result.fee_ku <= 0:
         return
@@ -252,14 +256,17 @@ def _log_billing_summary(result: TaskResult) -> None:
     compute_ku = result.charged_ku
     compute_local = result.charged_local or result.provider_cost
     if compute_ku > 0 or compute_local > 0:
-        parts.append(f"compute {compute_ku:.4f} KU ({_fmt_money(compute_local, cur)})")
+        parts.append(f"compute {compute_ku:.4f} units")
 
     if result.fee_ku > 0:
-        parts.append(f"fee {result.fee_ku:.4f} KU ({_fmt_money(result.fee_local, cur)})")
+        parts.append(f"dispatch {result.fee_ku:.4f} units")
 
     total_ku = result.total_charged_ku or (compute_ku + result.fee_ku)
-    total_local = result.total_charged_local or (compute_local + result.fee_local)
-    parts.append(f"total {total_ku:.4f} KU ({_fmt_money(total_local, cur)})")
+    parts.append(f"total {total_ku:.4f} units of the test allowance")
+
+    # The provider's price for the run is a market fact, not a charge by us.
+    if compute_local > 0:
+        parts.append(f"market cost {_fmt_money(compute_local, cur)}")
 
     logger.info(" — ".join(parts))
 

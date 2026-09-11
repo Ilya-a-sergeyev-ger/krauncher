@@ -41,10 +41,10 @@ class InsufficientBalanceError(KrauncherError):
             self.balance_ku = float(detail.get("balance_ku", 0.0) or 0.0)
             self.held_ku = float(detail.get("held_ku", 0.0) or 0.0)
             msg = (
-                f"Insufficient balance: need {self.required_ku:.4f} KU "
-                f"(predicted {self.predicted_ku:.4f} + fee {self.fee_ku:.4f}), "
-                f"available {self.available_ku:.4f} KU "
-                f"(balance {self.balance_ku:.4f}, held {self.held_ku:.4f})"
+                f"Test allowance exhausted: need {self.required_ku:.4f} units "
+                f"(predicted {self.predicted_ku:.4f} + dispatch {self.fee_ku:.4f}), "
+                f"available {self.available_ku:.4f} units "
+                f"(allowance {self.balance_ku:.4f}, held {self.held_ku:.4f})"
             )
         else:
             self.required_ku = 0.0
@@ -53,7 +53,7 @@ class InsufficientBalanceError(KrauncherError):
             self.available_ku = 0.0
             self.balance_ku = 0.0
             self.held_ku = 0.0
-            msg = f"Insufficient balance: {detail}"
+            msg = f"Test allowance exhausted: {detail}"
         super().__init__(msg)
 
 
