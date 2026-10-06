@@ -5,16 +5,17 @@ how much work the payload is, measured on the reference card, in CU. The assay
 is a document — keep it. Given an assay, the ladder answers how long the same
 work takes on every GPU, sorted from fastest to slowest.
 
-    Client                                   Analyzer
-    ──────                                   ────────
+    Client                                   Analyzer / broker
+    ──────                                   ─────────────────
     analyzer.classify(source)           →   analysis (code E2E-encrypted)
     analyzer.assay(job_id)              ←   assay v1: work on the reference card
-    analyzer.ladder(assay)              ←   time per GPU, no prices
+    client.ladder(assay)                ←   time per GPU, no prices (broker)
 
 The ladder has no prices on purpose: multiply each row by the price you pay.
 
-The assay stays valid until the analyzer is recalibrated. After that
-analyzer.ladder() raises AssayOutdated — analyze the code again for a fresh assay.
+The ladder is available to accounts with ladder access enabled. The assay
+stays valid until the analyzer is recalibrated; after that client.ladder()
+raises AssayOutdated — analyze the code again for a fresh assay.
 
 Run it from a folder holding your .env (CAS_API_KEY):
 
@@ -24,7 +25,7 @@ Run it from a folder holding your .env (CAS_API_KEY):
 import asyncio
 import inspect
 
-from krauncher import KrauncherClient
+from krauncher import KrauncherClient, KrauncherError
 from krauncher.analyzer import AssayOutdated
 
 client = KrauncherClient()
@@ -65,9 +66,12 @@ async def main():
           f"(a slow host up to x{work['spread']['factor']})")
 
     try:
-        ladder = await analyzer.ladder(assay)
+        ladder = await client.ladder(assay)
     except AssayOutdated as exc:
         print(f"\nThe analyzer was recalibrated after this assay: analyze the code again. {exc}")
+        return
+    except KrauncherError as exc:
+        print(f"\n{exc}")
         return
 
     print()

@@ -218,7 +218,8 @@ def classify_safety_net() -> TaskClassification:
 # ---------------------------------------------------------------------------
 
 class AssayOutdated(RuntimeError):
-    """The analyzer was recalibrated after the assay was made (POST /ladder 409)."""
+    """The analyzer was recalibrated after the assay was made (/v1/ladder 409):
+    analyze the code again for a fresh assay. Raised by KrauncherClient.ladder()."""
 
 
 class AnalyzerClient:
@@ -352,19 +353,6 @@ class AnalyzerClient:
         """
         async with httpx.AsyncClient(timeout=self._timeout, headers=self._headers) as session:
             resp = await session.get(f"{self._url}/jobs/{job_id}/assay")
-            resp.raise_for_status()
-            return resp.json()
-
-    async def ladder(self, assay: dict) -> dict:
-        """POST /ladder — estimated time of the assay's work on every GPU, no prices.
-
-        Raises :class:`AssayOutdated` when the analyzer was recalibrated after
-        the assay was made (HTTP 409): analyze the code again for a fresh one.
-        """
-        async with httpx.AsyncClient(timeout=self._timeout, headers=self._headers) as session:
-            resp = await session.post(f"{self._url}/ladder", json=assay)
-            if resp.status_code == 409:
-                raise AssayOutdated(resp.json().get("detail"))
             resp.raise_for_status()
             return resp.json()
 

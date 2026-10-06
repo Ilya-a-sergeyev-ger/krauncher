@@ -1047,6 +1047,29 @@ class KrauncherClient:
             _check_response(resp)
             return resp.json()
 
+    async def ladder(self, assay: dict[str, Any]) -> dict[str, Any]:
+        """Estimated time of an assay's work on every GPU — no prices.
+
+        *assay* is what :meth:`AnalyzerClient.assay` returned. The broker
+        serves this only to accounts with ladder access enabled. Raises
+        :class:`~krauncher.analyzer.AssayOutdated` when the analyzer was
+        recalibrated after the assay was made (analyze the code again), and
+        :class:`KrauncherError` when the account has no ladder access.
+        """
+        from .analyzer import AssayOutdated
+        async with httpx.AsyncClient(timeout=30.0) as session:
+            resp = await session.post(
+                f"{self.broker_url}/v1/ladder",
+                json=assay,
+                headers={"X-API-Key": self.api_key},
+            )
+        if resp.status_code == 409:
+            raise AssayOutdated(resp.json().get("detail"))
+        if resp.status_code == 403:
+            raise KrauncherError("Ladder access is not enabled for this account.")
+        _check_response(resp)
+        return resp.json()
+
     async def get_task_report(self, task_id: str) -> dict[str, Any]:
         """Fetch the extended analytics report for a finished task.
 
