@@ -217,6 +217,11 @@ def classify_safety_net() -> TaskClassification:
 # Level 2: AnalyzerClient (E2E encrypted)
 # ---------------------------------------------------------------------------
 
+class AssayOutdated(RuntimeError):
+    """The analyzer was recalibrated after the assay was made (/v1/ladder 409):
+    analyze the code again for a fresh assay. Raised by KrauncherClient.ladder()."""
+
+
 class AnalyzerClient:
     """Async client for cas-analyzer with optional E2E encryption."""
 
@@ -339,6 +344,17 @@ class AnalyzerClient:
                     raise RuntimeError(f"Analyzer failed: {data.get('error', 'unknown')}")
                 elif asyncio.get_event_loop().time() > deadline:
                     raise TimeoutError(f"Analyzer timed out after {self._timeout}s")
+
+    async def assay(self, job_id: str) -> dict:
+        """GET /jobs/{job_id}/assay — the assay v1 of a finished analysis.
+
+        *job_id* is ``TaskClassification.analyzer_job_id``. The analyzer keeps
+        jobs for about an hour; keep the assay itself, it outlives the job.
+        """
+        async with httpx.AsyncClient(timeout=self._timeout, headers=self._headers) as session:
+            resp = await session.get(f"{self._url}/jobs/{job_id}/assay")
+            resp.raise_for_status()
+            return resp.json()
 
     @staticmethod
     def _parse_result(result: dict) -> TaskClassification:

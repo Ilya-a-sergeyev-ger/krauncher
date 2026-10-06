@@ -263,6 +263,7 @@ Numbered, runnable tutorials in [`tutorial/`](tutorial/):
 | 52  | `52_group_envelope.py`            | `client.group()` multi-phase envelope         |
 | 53  | `53_hf_native.py`                 | HuggingFace-native auto pre-fetch             |
 | 54  | `54_artifact_roundtrip.py`        | Files in / artifacts out                      |
+| 55  | `55_assay_ladder.py`              | Assay and per-GPU time ladder, before running |
 
 ---
 
