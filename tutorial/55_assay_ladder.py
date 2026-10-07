@@ -1,17 +1,19 @@
-"""Tutorial 55: The assay of a task and its time on every GPU — before running it.
+"""Tutorial 55: The assay of a task and its compute coefficient on every GPU — before running it.
 
 Nothing runs on a GPU here. The analyzer reads your code and issues an assay:
 how much work the payload is, measured on the reference card, in CU. The assay
-is a document — keep it. Given an assay, the ladder answers how long the same
-work takes on every GPU, sorted from fastest to slowest.
+is a document — keep it. Given an assay, the ladder gives every GPU's
+coefficient for the compute phase against the reference card, fastest first.
 
     Client                                   Analyzer / broker
     ──────                                   ─────────────────
     analyzer.classify(source)           →   analysis (code E2E-encrypted)
     analyzer.assay(job_id)              ←   assay v1: work on the reference card
-    client.ladder(assay)                ←   time per GPU, no prices (broker)
+    client.ladder(assay)                ←   compute coefficient per GPU (broker)
 
-The ladder has no prices on purpose: multiply each row by the price you pay.
+Time on a GPU = compute_ratio x the assay's compute phase + its other phases
+(warmup, I/O, setup), which do not depend on the GPU. Multiply by the price
+you pay.
 
 The ladder is available to accounts with ladder access enabled. The assay
 stays valid until the analyzer is recalibrated; after that client.ladder()
@@ -74,14 +76,19 @@ async def main():
         print(f"\n{exc}")
         return
 
-    print()
-    print(f"{'GPU':<28}{'VRAM, GB':>9}{'time, s':>10}{'x ref':>8}")
-    print("─" * 55)
-    for row in ladder["rows"][:15]:
-        print(f"{row['gpu_name']:<28}{row['vram_gb']:>9}"
-              f"{row['estimated_sec']:>10.1f}{row['ratio_to_reference']:>8.2f}")
-    print(f"... {len(ladder['rows'])} GPUs, calibration {ladder['meta']['calibration_id']}")
+    # Seconds per CU on the reference card: the assay's own scale.
+    sec_per_cu = work["reference_sec"] / work["reference_cu"]
+    compute_sec = work["phases_cu"]["compute"] * sec_per_cu
+    other_sec = work["reference_sec"] - compute_sec
 
+    print()
+    print(f"{'GPU':<28}{'VRAM, GB':>9}{'compute x':>11}{'time, s':>10}")
+    print("─" * 58)
+    for row in ladder["rows"][:15]:
+        sec = row["compute_ratio"] * compute_sec + other_sec
+        print(f"{row['gpu_name']:<28}{row['vram_gb']:>9}"
+              f"{row['compute_ratio']:>11.3f}{sec:>10.1f}")
+    print(f"... {len(ladder['rows'])} GPUs, calibration {ladder['meta']['calibration_id']}")
 
 if __name__ == "__main__":
     asyncio.run(main())

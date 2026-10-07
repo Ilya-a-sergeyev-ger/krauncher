@@ -1048,9 +1048,12 @@ class KrauncherClient:
             return resp.json()
 
     async def ladder(self, assay: dict[str, Any]) -> dict[str, Any]:
-        """Estimated time of an assay's work on every GPU — no prices.
+        """Each GPU's compute coefficient for an assay's work — no time, no prices.
 
-        *assay* is what :meth:`AnalyzerClient.assay` returned. The broker
+        A row's ``compute_ratio`` is the compute phase on that GPU over the
+        compute phase on the reference card (the assay's ``phases_cu.compute``);
+        the assay's other phases do not depend on the GPU and are not in the
+        ladder. *assay* is what :meth:`AnalyzerClient.assay` returned. The broker
         serves this only to accounts with ladder access enabled. Raises
         :class:`~krauncher.analyzer.AssayOutdated` when the analyzer was
         recalibrated after the assay was made (analyze the code again), and

@@ -205,7 +205,7 @@ Every submission is analysis (classify the code, price it) then execution
 | Size a whole sequence before submitting anything | `await client.group(task_a, task_b)` |
 | Analyze everything, submit nothing | `estimate_only=True` / `CAS_ESTIMATE_ONLY` |
 | Per-GPU predicted time and cost, before any client call | `POST /api/estimate` (see below) |
-| A frozen record of the work, and its time on every GPU | `analyzer.assay(job_id)` → `client.ladder(assay)` (see below) |
+| A frozen record of the work, and its compute coefficient on every GPU | `analyzer.assay(job_id)` → `client.ladder(assay)` (see below) |
 
 A decorated `@client.task` function classifies once and reuses that result for
 every later call, but its classification cannot be passed in or out — reuse
@@ -401,12 +401,14 @@ Response (rows sorted cheapest-first by `estimated_cost_usd`):
 
 ---
 
-## Assay and GPU ladder — the work as a document, time on every GPU
+## Assay and GPU ladder — the work as a document, its compute coefficient on every GPU
 
 The analyzer issues an **assay** (schema `assay/1`) for each analysis: what the
 workload is and how much work it is, measured on the reference card. The
-**ladder** turns an assay into estimated time on every GPU, fastest first, with
-**no prices** — multiply each row by the price you pay. Nothing runs on a GPU.
+**ladder** gives every GPU's coefficient for the assay's compute phase against
+the reference card, fastest first — no time, no prices. The other phases
+(warmup, I/O, setup) do not depend on the GPU and stay as the assay states
+them. Nothing runs on a GPU.
 The ladder is served only to accounts with ladder access (`GET /v1/me` →
 `"ladder_access": true`); the assay is available to every account.
 
@@ -427,7 +429,7 @@ c = await analyzer.classify(source, kwargs={"epochs": 3})   # TaskClassification
 #    assay itself (it is plain JSON), it outlives the job.
 assay = await analyzer.assay(c.analyzer_job_id)
 
-# 3. Time on every GPU for that assay.
+# 3. Compute coefficient on every GPU for that assay.
 try:
     ladder = await client.ladder(assay)
 except AssayOutdated:
@@ -465,20 +467,26 @@ Ladder:
 
 ```jsonc
 {
-  "meta": { "schema_version": "ladder/1", "calibration_id": "c-6c518e4b0bbf",
+  "meta": { "schema_version": "ladder/2", "calibration_id": "c-6c518e4b0bbf",
             "assay_calibration_id": "c-6c518e4b0bbf" },
-  "reference_sec": 142.0,
   "rows": [   // fastest first
-    { "gpu_id": "b200", "gpu_name": "B200 SXM", "vram_gb": 192,
-      "estimated_sec": 100.56, "ratio_to_reference": 0.708,
-      "phases_sec": { "compute": 85.02, "warmup": 11.02, "download": 2.52, "setup": 2.0 } }
+    { "gpu_id": "b200", "gpu_name": "B200 SXM", "vram_gb": 192, "compute_ratio": 0.678 }
   ]
 }
 ```
 
+Time on a GPU, from the assay and its ladder row:
+
+```python
+w = assay["work"]
+sec_per_cu = w["reference_sec"] / w["reference_cu"]        # the assay's own scale
+compute_sec = w["phases_cu"]["compute"] * sec_per_cu
+sec = row["compute_ratio"] * compute_sec + (w["reference_sec"] - compute_sec)
+```
+
 - **Send the assay back unchanged.** `assay_key` is sealed by the analyzer; an
-  edited or missing key is rejected (400). A CPU-only assay (`work: null`) has
-  nothing to rank (422).
+  edited or missing key is rejected (400). A CPU-only assay (`work: null`) or one
+  with no compute phase has nothing to rank (422).
 - **`calibration_id` dates the forecast.** An assay is valid until the analyzer
   is recalibrated; after that `ladder()` raises `AssayOutdated` (409).
 - Rows cover every catalogue GPU with at least `requirements.min_vram_gb`.
